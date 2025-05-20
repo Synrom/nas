@@ -1,0 +1,5 @@
+/.venv
+/dataset/.download/
+/log/
+__pycache__/
+.DS_Store
