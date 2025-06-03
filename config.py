@@ -1,0 +1,28 @@
+from dataclasses import dataclass
+
+
+@dataclass
+class Config:
+  momentum: float = 0.9
+  weight_decay: float = 3e-4
+  arch_learning_rate: float = 3e-4
+  arch_weight_decay: float = 1e-3
+  unrolled: bool = False
+  batch_size: int = 64
+  learning_rate: float = 0.025
+  learning_rate_min: float = 0.001
+  report_freq: int = 50
+  epochs: int = 50
+  init_channels: int = 16
+  layers: int = 8
+  model_path: str = "saved_models"
+  cutout: bool = False
+  cutout_length: int = 16
+  drop_path_prob: float = 0.3
+  save: str = "EXP"
+  seed: int = 2
+  grad_clip: float = 5
+  train_portion: float = 0.5
+  runid: str = "train"
+  logdir: str = "log"
+  data_num_workers: int = 2
