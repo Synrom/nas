@@ -67,7 +67,7 @@ class Cell(nn.Module):
       h2 = states[self._indices[2 * i + 1]]
       op1 = self._ops[2 * i]
       op2 = self._ops[2 * i + 1]
-      h1 = op1(h1)
+      h1 = op1(h1)  # TODO: adjust for MaxPool2D ([0])
       h2 = op2(h2)
       if self.training and drop_prob > 0.0:
         if not isinstance(op1, Identity):

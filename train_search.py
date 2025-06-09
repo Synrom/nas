@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 import random
 import argparse
 import time
@@ -7,15 +8,22 @@ from torchvision import transforms
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import SubsetRandomSampler
 import torch.nn as nn
+from torch.optim import Optimizer
+from pathlib import Path
 
 from dataset.transform import Cutout
 from dataset.cifar import cifar10_means, cifar10_stds
 from dataset.wrapper import cifar10
-from monitor import Monitor
+from monitor.monitor import Monitor
 from utils import clone_model, models_eq
 from config import Config
 from models.darts.model_search import Network
 from models.darts.architect import Architect
+
+
+def add_neglatible_bool_to_parser(parser: argparse.ArgumentParser, cmd: str, name: str):
+  parser.add_argument(cmd, action="store_false", dest=name)
+  parser.set_defaults(**{name: True})
 
 
 def parse_args() -> Config:
@@ -39,6 +47,7 @@ def parse_args() -> Config:
   parser.add_argument("--grad_clip", type=float, default=5, help="gradient clipping")
   parser.add_argument("--train_portion", type=float, default=0.5, help="portion of training data")
   parser.add_argument("--data_num_workers", type=int, default=2, help="num workers of data loaders")
+  parser.add_argument("--checkpoint", type=str, help="path to checkpoint pickle-file")
   parser.add_argument("--unrolled",
                       action="store_true",
                       default=False,
@@ -51,6 +60,23 @@ def parse_args() -> Config:
                       type=float,
                       default=1e-3,
                       help="weight decay for arch encoding")
+  add_neglatible_bool_to_parser(parser, "--no-vis-acts-and-grads", "vis_activations_and_gradients")
+  add_neglatible_bool_to_parser(parser, "--no-vis-fist-batch-inputs", "vis_first_batch_inputs")
+  add_neglatible_bool_to_parser(parser, "--no-test-data-sharing", "test_data_sharing_inbetween_batch")
+  add_neglatible_bool_to_parser(parser, "--no-overfit-single-batch", "overfit_single_batch")
+  add_neglatible_bool_to_parser(parser, "--no-input-dependent-baseline", "input_dependent_baseline")
+  add_neglatible_bool_to_parser(parser, "--no-eval-test-batch", "eval_test_batch")
+  add_neglatible_bool_to_parser(parser, "--no-live-validate", "live_validate")
+  add_neglatible_bool_to_parser(parser, "--debug", "debug")
+  add_neglatible_bool_to_parser(parser, "--no-save-checkpoint", "save_checkpoint")
+  add_neglatible_bool_to_parser(parser, "--no-vis-alphas", "vis_alphas")
+  add_neglatible_bool_to_parser(parser, "--no-vis-genotypes", "vis_genotypes")
+  add_neglatible_bool_to_parser(parser, "--no-vis-lrs", "vis_lrs")
+  add_neglatible_bool_to_parser(parser, "--no-vis-eigenvalues", "vis_eigenvalues")
+  parser.add_argument("--vis_interval",
+                      type=int,
+                      default=200,
+                      help="Interval to visualize training loss")
   args = parser.parse_args()
   return Config(**vars(args))
 
@@ -110,48 +136,56 @@ valid_queue = DataLoader(
 )
 
 criterion = nn.CrossEntropyLoss()
-model = Network(config.init_channels, 10, config.layers, criterion, device)
+if config.checkpoint is not None:
+  model = Network.load_from_file(Path(config.checkpoint))
+else:
+  model = Network(config.init_channels, 10, config.layers, criterion, device)
 model.to(device)
 optimizer = torch.optim.SGD(model.parameters(),
                             config.learning_rate,
                             momentum=config.momentum,
                             weight_decay=config.weight_decay)
-monitor = Monitor(
-    model,
-    test_dataset=test_dataset,
-    device=device,
-    criterion=criterion,
-    debug=True,
-    runid=config.runid,
-    logdir=config.logdir,
-)
+architect = Architect(model, config)
+monitor = Monitor(model,
+                  architect=architect,
+                  test_dataset=test_dataset,
+                  device=device,
+                  criterion=criterion,
+                  debug=config.debug,
+                  runid=config.runid,
+                  logdir=config.logdir,
+                  vis_interval=config.vis_interval,
+                  vis_acts_and_grads=config.vis_activations_and_gradients,
+                  num_steps_per_epoch=len(train_queue))
 
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,
                                                        config.epochs,
                                                        eta_min=config.learning_rate_min)
 
-architect = Architect(model, config)
 
-
-def validate_model(model: nn.Module, criterion: nn.Module, monitor: Monitor):
+def validate_model(model: Network, criterion: nn.Module, monitor: Monitor, valid_queue: DataLoader,
+                   config: Config) -> tuple[float, float, float]:
+  """
+  Run model on valid_queue and report results to monitor.
+  """
   model.eval()
   losses, accs, topk_accs = [], [], []
   with torch.no_grad():
     for idx, batch in enumerate(valid_queue):
       imgs, input, target = batch
-      input, target = input.to(device), target.to(device)
+      input, target = input.to(model.device), target.to(model.device)
       logits = model(input)
 
       # loss
       loss = criterion(logits, target)
       assert logits.shape == torch.Size([config.batch_size, 10])
-      losses.append(loss)
+      losses.append(loss.item())
 
       # accuracy
       preds = logits.argmax(dim=1)
       assert preds.shape == target.shape
       acc = torch.sum(preds == target) / target.shape[0]
-      accs.append(acc)
+      accs.append(acc.item())
 
       # topk-accuracy
       _, topk_preds = logits.topk(k=5, dim=1)
@@ -169,15 +203,15 @@ def validate_model(model: nn.Module, criterion: nn.Module, monitor: Monitor):
 
 
 def train(model: Network, criterion: nn.Module, monitor: Monitor, architect: Architect, lr: float,
-          epoch: int):
+          epoch: int, optimizer: Optimizer):
   for idx, (imgs, input_train, target_train) in enumerate(train_queue):
     model.train()
     assert target_train.shape == torch.Size([config.batch_size])
 
-    input_train, target_train = input_train.to(device), target_train.to(device)
+    input_train, target_train = input_train.to(model.device), target_train.to(model.device)
 
     imgs_search, input_search, target_search = next(iter(valid_queue))
-    input_search, target_search = input_search.to(device), target_search.to(device)
+    input_search, target_search = input_search.to(model.device), target_search.to(model.device)
 
     architect.step(input_train,
                    target_train,
@@ -199,31 +233,55 @@ def train(model: Network, criterion: nn.Module, monitor: Monitor, architect: Arc
 
     # do some sanity tests for very first batch
     if epoch == 0 and idx == 0:
-      monitor.first_batch(imgs, input_train, target_train, loss.item())
-      monitor.test_data_sharing_inbetween_batch(model, input_train)
-      bf_model, bf_criterion = model.new(), clone_model(criterion)
-      monitor.overfit_single_batch(model, input_train, target_train, criterion, optimizer, 100)
-      assert models_eq(bf_model, model) == False
-      assert models_eq(bf_criterion, criterion) == False
-      del bf_model
-      del bf_criterion
+      if config.vis_first_batch_inputs is True:
+        monitor.first_batch(imgs, input_train, target_train, loss.item())
+      if config.test_data_sharing_inbetween_batch is True:
+        monitor.test_data_sharing_inbetween_batch(model, input_train)
+
+      # overfit single batch. Save model and criterion to make sure they dont change
+      if config.overfit_single_batch is True:
+        bf_model, bf_criterion = model.clone(), clone_model(criterion)
+        monitor.overfit_single_batch(model, input_train, target_train, input_search, target_search,
+                                     criterion, optimizer, config, lr, 100)
+
+        # model and critertion should not have changed
+        assert models_eq(bf_model, model) == True
+        assert models_eq(bf_criterion, criterion) == True
+        del bf_model
+        del bf_criterion
+
+    if idx == 0:  # at beginning of each epoch
+      if config.vis_eigenvalues:
+        monitor.visualize_eigenvalues(input_search, target_search)
+
+    if idx % config.vis_interval == 0:
+      if config.vis_lrs:
+        monitor.visualize_lrs(lr)
 
     monitor.add_training_loss(loss.item())
-    break  # for debugging
 
 
 for epoch in range(config.epochs):
   lr = scheduler.get_last_lr()[0]
 
   # train single batch
-  train(model, criterion, monitor, architect, lr, epoch)
+  train(model, criterion, monitor, architect, lr, epoch, optimizer)
 
   # visualize everything
   monitor.end_epoch()
   model.eval()
-  monitor.input_dependent_baseline(model, criterion)
-  monitor.eval_test_batch(model, f"After {epoch} epochs")
-  validate_model(model, criterion, monitor)
+  if config.input_dependent_baseline is True:
+    monitor.input_dependent_baseline(model, criterion)
+  if config.eval_test_batch is True:
+    monitor.eval_test_batch(f"After {epoch} epochs")
+  if config.live_validate is True:
+    validate_model(model, criterion, monitor, valid_queue, config)
+  if config.vis_alphas is True:
+    monitor.visualize_alphas(
+        F.softmax(model.alphas_normal, dim=-1).detach().cpu().numpy(),
+        F.softmax(model.alphas_reduce, dim=-1).detach().cpu().numpy())
+  if config.vis_genotypes is True:
+    monitor.visualize_genotypes(model.genotype())
 
   # save model
   torch.save(model.state_dict(), f"{config.logdir}/{config.runid}/checkpoint-{epoch}-epochs.pt")

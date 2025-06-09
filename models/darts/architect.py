@@ -1,9 +1,12 @@
+from __future__ import annotations
 import torch
 import numpy as np
 import torch.nn as nn
+from abc import ABC, abstractmethod
 from torch.autograd import Variable
 from torch.optim import Optimizer
-from typing import Iterable
+from typing import Iterable, Callable
+from numpy.linalg import eigvals
 
 from config import Config
 from models.darts.model_search import Network
@@ -14,6 +17,31 @@ def _concat(xs: Iterable[torch.Tensor] | torch.Tensor) -> torch.Tensor:
     Returned concatination of flattened xs.
     """
   return torch.cat([x.view(-1) for x in xs])
+
+
+HookFn = Callable[[torch.Tensor], None]
+
+
+class Hook(ABC):
+
+  def __init__(self, architect: Architect):
+    self.architect = architect
+
+  @abstractmethod
+  def remove(self):
+    ...
+
+
+class AlphaGradHook(Hook):
+
+  def remove(self):
+    self.architect.alpha_grad_hook = lambda _: None
+
+
+class HessianHook(Hook):
+
+  def remove(self):
+    self.architect.hessian_hook = lambda _: None
 
 
 class Architect(object):
@@ -31,6 +59,9 @@ class Architect(object):
         betas=(0.5, 0.999),
         weight_decay=args.arch_weight_decay,
     )
+    self.arch_weight_decay = args.arch_weight_decay
+    self.hessian_hook: HookFn = lambda _: None
+    self.alpha_grad_hook: HookFn = lambda _: None
 
   def _compute_unrolled_model(self, input: torch.Tensor, target: torch.Tensor, eta: float,
                               network_optimizer: Optimizer):
@@ -136,6 +167,7 @@ class Architect(object):
         v.grad = Variable(g.data)
       else:
         v.grad.data.copy_(g.data)
+    self.alpha_grad_hook(torch.stack(dalpha))
 
   def _construct_model_from_theta(self, theta: torch.Tensor) -> Network:
     """
@@ -159,7 +191,7 @@ class Architect(object):
                               vector: list[torch.Tensor],
                               input: torch.Tensor,
                               target: torch.Tensor,
-                              r: float = 1e-2) -> list[torch.Tensor]:
+                              r: float = 1e-2) -> torch.Tensor:
     """
         Compute second gradient loss term: d^2,alpha,w Ltrain(w, alpha) dw' Lval(w', alpha)
 
@@ -196,4 +228,69 @@ class Architect(object):
       p.data.add_(v, alpha=R)
 
     # Finally calculate second gradient loss term: d^2,alpha,w Ltrain(w, alpha) dw' Lval(w', alpha)
-    return [(x - y).div_(2 * R) for x, y in zip(grads_p, grads_n)]
+    hessian = torch.stack([(x - y).div_(2 * R) for x, y in zip(grads_p, grads_n)])
+    self.hessian_hook(hessian)
+    return hessian
+
+  def add_alpha_hook(self, hook: HookFn):
+    self.alpha_grad_hook = hook
+    return AlphaGradHook(self)
+
+  def add_hessian_hook(self, hook: HookFn):
+    self.hessian_hook = hook
+    return HessianHook(self)
+
+  def compute_hessian_eigenvalues(self, input_valid: torch.Tensor, target_valid: torch.Tensor):
+
+    def zero_grads(parameters):
+      for p in parameters:
+        if p.grad is not None:
+          p.grad.detach_()
+          p.grad.zero_()
+
+    def gradient(_outputs, _inputs, grad_outputs=None, retain_graph=None, create_graph=False):
+      if torch.is_tensor(_inputs):
+        _inputs = [_inputs]
+      else:
+        _inputs = list(_inputs)
+      grads = torch.autograd.grad(_outputs,
+                                  _inputs,
+                                  grad_outputs,
+                                  allow_unused=True,
+                                  retain_graph=retain_graph,
+                                  create_graph=create_graph)
+      grads = [x if x is not None else torch.zeros_like(y) for x, y in zip(grads, _inputs)]
+      return torch.cat([x.contiguous().view(-1) for x in grads])
+
+    zero_grads(self.model.parameters())
+    zero_grads(self.model.arch_parameters())
+    loss = self.model._loss(input_valid, target_valid)
+    inputs = self.model.arch_parameters()
+    if torch.is_tensor(inputs):
+      inputs = [inputs]
+    else:
+      inputs = list(inputs)
+
+    n = sum(p.numel() for p in inputs)
+    hessian = Variable(torch.zeros(n, n)).type_as(loss)
+
+    ai = 0
+    for i, inp in enumerate(inputs):
+      [grad] = torch.autograd.grad(loss, inp, create_graph=True, allow_unused=False)
+      grad = grad.contiguous().view(-1) + self.arch_weight_decay * inp.view(-1)
+
+      for j in range(inp.numel()):
+        if grad[j].requires_grad:
+          row = gradient(grad[j], inputs[i:], retain_graph=True)[j:]
+        else:
+          n = sum(x.numel() for x in inputs[i:]) - j
+          row = Variable(torch.zeros(n)).type_as(grad[j])
+          #row = grad[j].new_zeros(sum(x.numel() for x in inputs[i:]) - j)
+
+        hessian.data[ai, ai:].add_(row.clone().type_as(hessian).data)  # ai's row
+        if ai + 1 < n:
+          hessian.data[ai + 1:, ai].add_(row.clone().type_as(hessian).data[1:])  # ai's column
+        del row
+        ai += 1
+      del grad
+    return eigvals(hessian.cpu().data.numpy())

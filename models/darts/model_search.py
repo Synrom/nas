@@ -4,10 +4,24 @@ import torch.nn as nn
 import torch.nn.functional as F
 from numpy import ndarray
 from torch.autograd import Variable
+from pathlib import Path
 
 from models.darts.operations import *
 from models.darts.genotypes import PRIMITIVES
 from models.darts.genotypes import Genotype
+
+
+class MaxPoolWithBN(nn.Module):
+
+  def __init__(self, pool: nn.MaxPool2d, bn: nn.BatchNorm2d):
+    super().__init__()
+    self.pool = pool
+    self.bn = bn
+
+  def forward(self, x):
+    out, _ = self.pool(x)
+    out = self.bn(out)
+    return out
 
 
 class MixedOp(nn.Module):
@@ -21,7 +35,10 @@ class MixedOp(nn.Module):
     for primitive in PRIMITIVES:
       op = OPS[primitive](C, stride, False)
       if "pool" in primitive:
-        op = nn.Sequential(op, nn.BatchNorm2d(C, affine=False))
+        if isinstance(op, nn.MaxPool2d):
+          op = MaxPoolWithBN(op, nn.BatchNorm2d(C, affine=False))
+        else:
+          op = nn.Sequential(op, nn.BatchNorm2d(C, affine=False))
       self._ops.append(op)
 
   def forward(self, x: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
@@ -30,6 +47,9 @@ class MixedOp(nn.Module):
           x: edge input
           weights: the alphas of the operations
         """
+    results = []
+    for w, op in zip(weights, self._ops):
+      results.append(w * op(x))
     return sum(w * op(x) for w, op in zip(weights, self._ops))
 
 
@@ -165,6 +185,15 @@ class Network(nn.Module):
       x.data.copy_(y.data)
     return model_new
 
+  def clone(self) -> Network:
+    """
+    Clones this network.
+    """
+    model = self.new()
+    for x, y in zip(model.parameters(), self.parameters()):
+      x.data.copy_(y.data)
+    return model
+
   def forward(self, input: torch.Tensor) -> torch.Tensor:
     # get inputs cells from stem module
     s0 = s1 = self.stem(input)
@@ -211,7 +240,7 @@ class Network(nn.Module):
 
   def genotype(self) -> Genotype:
     """
-        Create genotype that describes learned network.
+        Create genotype that describes learned network with only the top-2 edges going into a node.
         """
 
     def _parse(weights: ndarray) -> list[tuple[str, int]]:
@@ -263,3 +292,16 @@ class Network(nn.Module):
                         reduce=gene_reduce,
                         reduce_concat=concat)
     return genotype
+
+  def save_to_file(self, path: Path):
+    """
+    Safes model as pickle to path.
+    """
+    torch.save(self, path)
+
+  @staticmethod
+  def load_from_file(path: Path) -> Network:
+    """
+    Reads model as pickle from path.
+    """
+    return torch.load(path, weights_only=False)
