@@ -2,6 +2,13 @@ from dataclasses import dataclass
 
 
 @dataclass
+class PastTrainRun:
+  epoch: int
+  checkpoint: str
+  scheduler_checkpoint: str
+
+
+@dataclass
 class Config:
   momentum: float = 0.9
   weight_decay: float = 3e-4
@@ -41,3 +48,4 @@ class Config:
   vis_genotypes: bool = True
   vis_lrs: bool = True
   vis_eigenvalues: bool = True
+  past_train: str | None = None

@@ -49,16 +49,11 @@ class Architect(object):
     This class handles the training of the network during search stage.
     """
 
-  def __init__(self, model: Network, args: Config):
+  def __init__(self, model: Network, args: Config, optimizer: Optimizer):
     self.network_momentum = args.momentum
     self.network_weight_decay = args.weight_decay
     self.model = model
-    self.optimizer = torch.optim.Adam(
-        self.model.arch_parameters(),
-        lr=args.arch_learning_rate,
-        betas=(0.5, 0.999),
-        weight_decay=args.arch_weight_decay,
-    )
+    self.optimizer = optimizer
     self.arch_weight_decay = args.arch_weight_decay
     self.hessian_hook: HookFn = lambda _: None
     self.alpha_grad_hook: HookFn = lambda _: None
@@ -184,7 +179,7 @@ class Architect(object):
 
     assert offset == len(theta)
     model_dict.update(params)
-    model_new.load_state_dict(model_dict)
+    model_new.load_state_dict(model_dict, assign=False)
     return model_new.to(self.model.device)
 
   def _hessian_vector_product(self,
@@ -267,7 +262,7 @@ class Architect(object):
     loss = self.model._loss(input_valid, target_valid)
     inputs = self.model.arch_parameters()
     if torch.is_tensor(inputs):
-      inputs = [inputs]
+      inputs = [inputs]  # type: ignore
     else:
       inputs = list(inputs)
 

@@ -2,7 +2,7 @@
 See plot as function that visualizes numpy arrays.
 """
 
-from typing import Callable, Literal, Protocol
+from typing import Callable, Literal, Protocol, TypeVar, Generic
 from abc import ABC, abstractmethod
 import matplotlib
 
@@ -57,11 +57,11 @@ class TwoLines(Plot):
     assert len(data.shape) > 1
     assert data.shape[0] == 2
     if self.label1:
-      axes.plot(data[0], label=self.label1)
+      axes.plot(np.arange(len(data[0])), data[0], label=self.label1)
     else:
       axes.plot(data[0])
     if self.label2:
-      axes.plot(data[1], label=self.label2)
+      axes.plot(np.arange(len(data[1])), data[1], label=self.label2)
     else:
       axes.plot(data[1])
     if self.title:
@@ -74,6 +74,8 @@ class TwoLines(Plot):
         step = epoch * self.num_steps_per_epoch
         plt.axvline(x=step, color='gray', linestyle='--', alpha=0.5)
         plt.text(step, plt.ylim()[1], f'Epoch {epoch}', rotation=90, va='top', ha='right', fontsize=8)
+    if self.label1 or self.label2:
+      fig.legend()
     return fig
 
 
@@ -86,7 +88,7 @@ class Line(Plot):
 
   def plot(self, data: np.ndarray, fig: Figure | None = None, axes: Axes | None = None) -> Figure:
     fig, axes = self.fig_and_axes(fig, axes)
-    axes.plot(data)
+    axes.plot(np.arange(len(data)), data)
     if self.title:
       axes.set_title(self.title)
     if self.ylabel:
@@ -175,7 +177,10 @@ class Bar(Plot):
     return fig
 
 
-class Grid(Plot):
+T = TypeVar('T', bound=Plot)
+
+
+class Grid(Generic[T]):
 
   def __init__(self,
                default: Plot,
@@ -312,12 +317,19 @@ class VisAlpha(Plot):
     return fig
 
 
-class GenotypeGraph:
+class GenotypeGraph(Plot):
 
-  def __init__(self, genotype: list[tuple[str, int]]):
-    self.genotype = genotype
+  def __init__(self):
+    self.dtype = np.dtype([('name', 'U10'), ('count', 'i4')])
 
-  def graph(self) -> Digraph:
+  def convert_array_to_genotype(self, data: np.ndarray) -> list[tuple[str, int]]:
+    assert data.dtype == self.dtype
+    return [(str(i["name"]), int(i["count"])) for i in data]
+
+  def convert_genotype_to_array(self, genotype: list[tuple[str, int]]) -> np.ndarray:
+    return np.array(genotype, dtype=self.dtype)
+
+  def graph(self, genotype: list[tuple[str, int]]) -> Digraph:
     g = Digraph(format='pdf',
                 edge_attr=dict(fontsize='20', fontname="times"),
                 node_attr=dict(style='filled',
@@ -333,15 +345,15 @@ class GenotypeGraph:
 
     g.node("c_{k-2}", fillcolor='darkseagreen2')
     g.node("c_{k-1}", fillcolor='darkseagreen2')
-    assert len(self.genotype) % 2 == 0
-    steps = len(self.genotype) // 2
+    assert len(genotype) % 2 == 0
+    steps = len(genotype) // 2
 
     for i in range(steps):
       g.node(str(i), fillcolor='lightblue')
 
     for i in range(steps):
       for k in [2 * i, 2 * i + 1]:
-        op, j = self.genotype[k]
+        op, j = genotype[k]
         if j == 0:
           u = "c_{k-2}"
         elif j == 1:
@@ -356,10 +368,11 @@ class GenotypeGraph:
       g.edge(str(i), "c_{k}", fillcolor="gray")
     return g
 
-  def __call__(self, fig: Figure | None = None, axes: Axes | None = None) -> Figure:
+  def plot(self, data: np.ndarray, fig: Figure | None = None, axes: Axes | None = None) -> Figure:
     if fig is None or axes is None:
       fig, axes = plt.subplots(1, 2, figsize=(6, 4))
-    g = self.graph()
+    genotype = self.convert_array_to_genotype(data)
+    g = self.graph(genotype)
     img_bytes = g.pipe(format='png')
     image = PILImage.open(io.BytesIO(img_bytes))
     axes.imshow(image)  # type: ignore

@@ -5,23 +5,11 @@ import torch.nn.functional as F
 from numpy import ndarray
 from torch.autograd import Variable
 from pathlib import Path
+from torch import jit
 
 from models.darts.operations import *
 from models.darts.genotypes import PRIMITIVES
 from models.darts.genotypes import Genotype
-
-
-class MaxPoolWithBN(nn.Module):
-
-  def __init__(self, pool: nn.MaxPool2d, bn: nn.BatchNorm2d):
-    super().__init__()
-    self.pool = pool
-    self.bn = bn
-
-  def forward(self, x):
-    out, _ = self.pool(x)
-    out = self.bn(out)
-    return out
 
 
 class MixedOp(nn.Module):
@@ -35,10 +23,7 @@ class MixedOp(nn.Module):
     for primitive in PRIMITIVES:
       op = OPS[primitive](C, stride, False)
       if "pool" in primitive:
-        if isinstance(op, nn.MaxPool2d):
-          op = MaxPoolWithBN(op, nn.BatchNorm2d(C, affine=False))
-        else:
-          op = nn.Sequential(op, nn.BatchNorm2d(C, affine=False))
+        op = nn.Sequential(op, nn.BatchNorm2d(C, affine=False))
       self._ops.append(op)
 
   def forward(self, x: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
@@ -47,9 +32,7 @@ class MixedOp(nn.Module):
           x: edge input
           weights: the alphas of the operations
         """
-    results = []
-    for w, op in zip(weights, self._ops):
-      results.append(w * op(x))
+
     return sum(w * op(x) for w, op in zip(weights, self._ops))
 
 
@@ -133,6 +116,7 @@ class Network(nn.Module):
       steps: int = 4,
       multiplier: int = 4,
       stem_multiplier: int = 3,
+      supports_bf16: bool = False,
   ):
     """
         Args:
@@ -152,6 +136,7 @@ class Network(nn.Module):
     self._steps = steps
     self._multiplier = multiplier
     self.device = device
+    self.supports_bf16 = supports_bf16
 
     C_curr = stem_multiplier * C
     self.stem = nn.Sequential(nn.Conv2d(3, C_curr, 3, padding=1, bias=False), nn.BatchNorm2d(C_curr))
@@ -215,6 +200,10 @@ class Network(nn.Module):
     return logits
 
   def _loss(self, input, target):
+    if self.supports_bf16 is True:
+      with torch.autocast(device_type=str(self.device), dtype=torch.bfloat16):
+        logits = self(input)
+        return self._criterion(logits, target)
     logits = self(input)
     return self._criterion(logits, target)
 

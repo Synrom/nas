@@ -1,4 +1,6 @@
 import os
+import json
+import pickle
 from typing import TypeVar, Generic
 from pathlib import Path
 import matplotlib
@@ -18,7 +20,7 @@ class Live(Generic[T]):
   """
 
   def __init__(self, path: Path, plot: T, init_data: np.ndarray | None = None):
-    self.data_path = path.with_name(f"{path.name}.data")
+    self.data_path = path.with_name(f"{path.name}.npy")
     if self.data_path.exists() and init_data is None:
       self.data = np.load(self.data_path.as_posix())
     else:
@@ -51,18 +53,31 @@ class Live(Generic[T]):
     self.data = np.concatenate((self.data, item), axis=axis)
 
 
-class LiveGrid(Live):
+T2 = TypeVar('T2', bound='Plot')
+
+
+class LiveGrid(Live, Generic[T2]):
   """
   Live for Grids
   """
 
-  def __init__(self, path: Path, grid: Grid):
+  def __init__(self, path: Path, grid: Grid[T2]):
     self.path = path
     self.plot = grid
     self.rows = self.plot.rows
     self.cols = self.plot.cols
-    self.grid_data: list[list[np.ndarray | None]] = [[None for c in range(self.cols)]
-                                                     for r in range(self.rows)]
+    self.data_path = path.with_name(f"{path.name}.npy")
+    self.data_path_titles = path.with_name(f"{path.name}_titles.json")
+    if self.data_path.exists():
+      with open(self.data_path.as_posix(), "rb") as fstream:
+        self.grid_data: list[list[np.ndarray | None]] = pickle.load(fstream)
+      self.rows = len(self.grid_data)
+      self.plot.rows = self.rows
+    else:
+      self.grid_data = [[None for c in range(self.cols)] for r in range(self.rows)]
+    if self.data_path_titles.exists():
+      with open(self.data_path_titles.as_posix(), "rb") as fstream:
+        self.plot.titles = pickle.load(fstream)
 
   def add_idx(self, item: np.ndarray, row: int, col: int, title: str | None = None):
     self.grid_data[row][col] = item
@@ -76,6 +91,10 @@ class LiveGrid(Live):
     return self.plot.rows - 1
 
   def commit(self):
+    with open(self.data_path_titles.as_posix(), "wb") as fstream:
+      pickle.dump(self.plot.titles, fstream)
+    with open(self.data_path.as_posix(), "wb") as fstream:
+      pickle.dump(self.grid_data, fstream)
     fig, axes = plt.subplots(self.rows,
                              self.cols,
                              squeeze=False,

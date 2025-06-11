@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import torch.nn as nn
 from torch.utils.data import DataLoader
 import torch.optim as optim
+import torch.nn.functional as F
 import torch
 import os
 import random
@@ -37,6 +38,7 @@ class Monitor:
       vis_interval: int,
       vis_acts_and_grads: bool,
       num_steps_per_epoch: int,
+      epoch: int = 0,
       batch_size: int = 8,
       logdir: str = "log",
       runid: str = "train",
@@ -72,8 +74,8 @@ class Monitor:
     self.smoothed_training_loss = Live(self.path / "smooth_training_loss.png",
                                        Line(title="Smoothed Training Loss", ylabel="Loss", grid=True))
     self.steps = 0
-    self.epoch = 0
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
+    self.epoch = epoch
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
     self.test_batch = next(iter(test_loader))
     self.device = device
     self.criterion = criterion
@@ -92,8 +94,8 @@ class Monitor:
                                   VisAlpha(steps=model._steps, primitives=self.primitives))
     self.vis_alphas_reduce = Live(self.path / "alphas_reduce.png",
                                   VisAlpha(steps=model._steps, primitives=self.primitives))
-    self.vis_alphas_distribution = LiveGrid(self.path / "alphas_distribution.png",
-                                            Grid(Hist(50), rows=0, cols=2))
+    self.vis_alphas_distribution: LiveGrid[Hist] = LiveGrid(self.path / "alphas_distribution.png",
+                                                            Grid(Hist(50), rows=0, cols=2))
     self.valid_train_ref_idx: int = 0
     self.plot_interval = int(len(test_dataset) / 4)  # type: ignore
     self.normal_alphas_log = model.alphas_normal.detach().cpu().numpy()[np.newaxis, :, :]
@@ -105,15 +107,10 @@ class Monitor:
     self.hook_axes: None | plt.Axes = None
     self.hook_vis: None | LiveGrid = None
     self.test_batch_vis: None | LiveGrid = None
-    self.vis_genotypes = LiveGrid(self.path / "graphs.png",
-                                  Grid(Line(), cols=2, rows=0, col_size=6, row_size=4))
-    self.vis_lrs = Live(
-        self.path / "learning_rates.png",
-        TwoLines("Model LR",
-                 "Alphas LR",
-                 "Learning rates",
-                 grid=True,
-                 num_steps_per_epoch=self.num_steps_per_epoch // self.vis_interval))
+    self.vis_genotypes: LiveGrid[GenotypeGraph] = LiveGrid(
+        self.path / "graphs.png", Grid(GenotypeGraph(), cols=2, rows=0, col_size=6, row_size=4))
+    self.vis_lrs = Live(self.path / "learning_rates.png",
+                        TwoLines("Model LR", "Alphas LR", "Learning rates", grid=True))
     self.vis_acts_and_grads = vis_acts_and_grads
     self.alpha_hook: Hook | None = None
     self.hessian_hook: Hook | None = None
@@ -180,7 +177,7 @@ class Monitor:
   def plot_inputs(self, title: str, row: int):
 
     def hook(module, input, output):
-      numbers = input[0].detach().cpu().flatten().numpy()
+      numbers = input[0].detach().cpu().float().flatten().numpy()
       self.hook_vis.add_idx(numbers, row, 0, title)
       if module in self.forward_hooks:
         self.forward_hooks[module].remove()
@@ -191,7 +188,7 @@ class Monitor:
   def plot_gradients(self, title: str, row: int):
 
     def hook(module, grad_input, grad_output):
-      numbers = grad_input[0].detach().cpu().flatten().numpy()
+      numbers = grad_input[0].detach().float().cpu().flatten().numpy()
       self.hook_vis.add_idx(numbers, row, 1, title)
       if module in self.backward_hooks:
         self.backward_hooks[module].remove()
@@ -210,7 +207,7 @@ class Monitor:
     num_samples = imgs.shape[0]
     imgs = imgs.permute(0, 2, 3, 1)
     data = X.detach().cpu().numpy()
-    plot = LiveGrid(
+    plot: LiveGrid[Image] = LiveGrid(
         self.path / "first_batch_model_inputs.png",
         Grid(
             Image(cmap="viridis",
@@ -227,6 +224,7 @@ class Monitor:
     plot.commit()
 
   def visualize_lrs(self, model_lr: float):
+    self.logger.info("Visualize LRs ...")
     assert len(self.architect.optimizer.param_groups) == 1
     alpha_lr = self.architect.optimizer.param_groups[0]["lr"]
     self.vis_lrs.add(np.array([model_lr, alpha_lr])[:, np.newaxis], axis=1)
@@ -234,45 +232,42 @@ class Monitor:
 
   def add_training_loss(self, loss: float):
     self.steps += 1
+    self.training_loss.add(nparray(loss))
     if self.debug is True:
-      self.training_loss.add(nparray(loss))
       self.training_loss.commit()
-    if self.steps % self.vis_interval == 0:
-      if self.debug is False:
-        self.training_loss.add(nparray(loss))
-      self.training_loss.commit()
-      self.logger.info(f"After {self.steps} batches of epoch {self.epoch}: loss {loss:.2f}")
-      # smooth training loss plot
-      if self.training_loss.data is not None:
-        loss = np.array(self.training_loss.data[-self.vis_interval:]).mean()
-        self.smoothed_training_loss.add(nparray(loss))
-        self.smoothed_training_loss.commit()
 
   def end_epoch(self):
-    self.model.save_to_file(
-        self.path / f"checkpoint-{self.epoch}-epochs.pkl")  # save model checkpoint at end of epoch
     self.epoch += 1
     self.steps = 0
+    self.training_loss.commit()
     if self.vis_acts_and_grads:
       self.add_hooks()  # visualize activations and gradients at beginning of each epoch
+    if self.training_loss.data is not None:
+      loss = np.array(self.training_loss.data[-self.vis_interval:]).mean()
+      self.smoothed_training_loss.add(nparray(loss))
+      self.smoothed_training_loss.commit()
 
   def eval_test_batch(self, title: str):
+    self.logger.info("Eval test batch ...")
     imgs, input, target = self.test_batch
     input, target = input.to(self.device), target.to(self.device)
     out = self.model(input)
     loss = self.criterion(out, target)
     self.logger.info(f"Loss on test batch is {loss.item():.2f}")
-    probs = out.cpu().detach().exp().numpy()
+    probs = F.softmax(out, dim=1).cpu().detach().numpy()
 
     labels = list(self.label2name.values())
     cols = imgs.shape[0]
     if self.test_batch_vis is None:
       imgs = imgs.permute(0, 2, 3, 1)
-      plot = Grid(Bar(labels=labels, ylim=(0, 1), xticks=list(range(len(labels))), rotation=45),
-                  rows=1,
-                  cols=cols,
-                  col_size=3,
-                  row_size=2)
+      plot: Grid[Bar] = Grid(Bar(labels=labels,
+                                 ylim=(0, 1),
+                                 xticks=list(range(len(labels))),
+                                 rotation=45),
+                             rows=1,
+                             cols=cols,
+                             col_size=3,
+                             row_size=2)
       self.test_batch_vis = LiveGrid(self.path / "test_batch_predictions.png", grid=plot)
       for col in range(cols):
         plot.manual[0, col] = plot_load_data(Image(), imgs[col])
@@ -302,11 +297,13 @@ class Monitor:
   def visualize_eigenvalues(self, input_valid: torch.Tensor, target_valid: torch.Tensor):
     self.logger.info("Calculating Hessian Eigenvalues ... This may take a while")
     eigvals = self.architect.compute_hessian_eigenvalues(input_valid, target_valid)
+    self.logger.info("Done calculating the Hessian Eigenvalues")
     dom_eigval = np.max(np.abs(eigvals))
     self.vis_eigvals.add(nparray(dom_eigval))
     self.vis_eigvals.commit()
 
   def visualize_alphas(self, alpha_normal: np.ndarray, alpha_reduce: np.ndarray):
+    self.logger.info("Visualize alphas ...")
     self.vis_alphas_normal.add(alpha_normal[np.newaxis, :, :], axis=0)
     self.vis_alphas_reduce.add(alpha_reduce[np.newaxis, :, :], axis=0)
     row = self.vis_alphas_distribution.add_row()
@@ -319,11 +316,14 @@ class Monitor:
     self.vis_alphas_distribution.commit()
 
   def visualize_genotypes(self, genotype: Genotype):
+    self.logger.info("Visualize genotypes ...")
     row = self.vis_genotypes.add_row()
-    self.vis_genotypes.plot.manual[(row, 0)] = GenotypeGraph(genotype.normal)
-    self.vis_genotypes.plot.titles[(row, 0)] = f"Normal cell at {self.epoch}th epoch"
-    self.vis_genotypes.plot.manual[(row, 1)] = GenotypeGraph(genotype.reduce)
-    self.vis_genotypes.plot.titles[(row, 1)] = f"Reduction cell at {self.epoch}th epoch"
+    self.vis_genotypes.add_idx(
+        self.vis_genotypes.plot.default.convert_genotype_to_array(genotype.normal), row, 0,
+        f"Normal cell at {self.epoch}th epoch")
+    self.vis_genotypes.add_idx(
+        self.vis_genotypes.plot.default.convert_genotype_to_array(genotype.reduce), row, 1,
+        f"Reduction cell at {self.epoch}th epoch")
     self.vis_genotypes.commit()
 
   def input_dependent_baseline(self, model: nn.Module, criterion: nn.Module):
@@ -374,6 +374,7 @@ class Monitor:
       target_search: torch.Tensor,
       criterion: nn.Module,
       optimizer: optim.Optimizer,
+      alpha_optimizer: optim.Optimizer,
       config: Config,
       lr: float,
       n: int = 1000,
@@ -383,7 +384,8 @@ class Monitor:
     model = model.clone()
     criterion = clone_model(criterion)
     optimizer = clone_optimizer(optimizer, model)
-    architect = Architect(model, config)
+    alpha_optimizer = clone_optimizer(alpha_optimizer, model)
+    architect = Architect(model, config, alpha_optimizer)
 
     visualization = Live(self.path / "overfit_batch_loss.png",
                          Line(title="Overfitting Batch Loss", ylabel="Loss", grid=True))

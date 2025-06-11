@@ -1,3 +1,5 @@
+import json
+import time
 import torch
 import torch.nn.functional as F
 import random
@@ -10,13 +12,17 @@ from torch.utils.data.sampler import SubsetRandomSampler
 import torch.nn as nn
 from torch.optim import Optimizer
 from pathlib import Path
+from dataclasses import asdict
+import multiprocessing as mp
+
+mp.set_start_method('spawn', force=True)
 
 from dataset.transform import Cutout
 from dataset.cifar import cifar10_means, cifar10_stds
 from dataset.wrapper import cifar10
 from monitor.monitor import Monitor
 from utils import clone_model, models_eq
-from config import Config
+from config import Config, PastTrainRun
 from models.darts.model_search import Network
 from models.darts.architect import Architect
 
@@ -48,6 +54,7 @@ def parse_args() -> Config:
   parser.add_argument("--train_portion", type=float, default=0.5, help="portion of training data")
   parser.add_argument("--data_num_workers", type=int, default=2, help="num workers of data loaders")
   parser.add_argument("--checkpoint", type=str, help="path to checkpoint pickle-file")
+  parser.add_argument("--past_train", type=str, default=None, help="Optional path to previous train.")
   parser.add_argument("--unrolled",
                       action="store_true",
                       default=False,
@@ -67,7 +74,8 @@ def parse_args() -> Config:
   add_neglatible_bool_to_parser(parser, "--no-input-dependent-baseline", "input_dependent_baseline")
   add_neglatible_bool_to_parser(parser, "--no-eval-test-batch", "eval_test_batch")
   add_neglatible_bool_to_parser(parser, "--no-live-validate", "live_validate")
-  add_neglatible_bool_to_parser(parser, "--debug", "debug")
+  parser.add_argument("--debug", action="store_true", dest="debug")
+  parser.set_defaults(debug=False)
   add_neglatible_bool_to_parser(parser, "--no-save-checkpoint", "save_checkpoint")
   add_neglatible_bool_to_parser(parser, "--no-vis-alphas", "vis_alphas")
   add_neglatible_bool_to_parser(parser, "--no-vis-genotypes", "vis_genotypes")
@@ -81,88 +89,6 @@ def parse_args() -> Config:
   return Config(**vars(args))
 
 
-config = parse_args()
-config.save = "search-{}-{}".format(config.save, time.strftime("%Y%m%d-%H%M%S"))
-
-if torch.backends.mps.is_available():
-  device = torch.device("mps")
-else:
-  device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-torch.backends.cudnn.benchmark = True
-torch.backends.cudnn.enabled = True
-
-# set random seed
-torch.manual_seed(config.seed)
-torch.cuda.manual_seed(config.seed)
-torch.cuda.manual_seed_all(config.seed)
-np.random.seed(config.seed)
-random.seed(config.seed)
-
-train_transform = transforms.Compose([
-    transforms.RandomCrop(32, padding=4),
-    transforms.RandomHorizontalFlip(),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=cifar10_means, std=cifar10_stds),
-])
-if config.cutout:
-  train_transform.transforms.append(Cutout(config.cutout_length))
-
-eval_transform = transforms.Compose(
-    [transforms.ToTensor(),
-     transforms.Normalize(mean=cifar10_means, std=cifar10_stds)])
-
-train_dataset = cifar10(train=True, transform=train_transform, download=True)
-test_dataset = cifar10(train=False, transform=eval_transform, download=True)
-
-num_train = len(train_dataset)
-indices = list(range(num_train))
-split = int(np.floor(config.train_portion * num_train))
-
-train_queue = DataLoader(
-    train_dataset,
-    batch_size=config.batch_size,
-    sampler=SubsetRandomSampler(indices[:split]),
-    pin_memory=False,
-    num_workers=config.data_num_workers,
-)
-
-valid_queue = DataLoader(
-    train_dataset,
-    batch_size=config.batch_size,
-    sampler=SubsetRandomSampler(indices[split:num_train]),
-    pin_memory=False,
-    num_workers=config.data_num_workers,
-)
-
-criterion = nn.CrossEntropyLoss()
-if config.checkpoint is not None:
-  model = Network.load_from_file(Path(config.checkpoint))
-else:
-  model = Network(config.init_channels, 10, config.layers, criterion, device)
-model.to(device)
-optimizer = torch.optim.SGD(model.parameters(),
-                            config.learning_rate,
-                            momentum=config.momentum,
-                            weight_decay=config.weight_decay)
-architect = Architect(model, config)
-monitor = Monitor(model,
-                  architect=architect,
-                  test_dataset=test_dataset,
-                  device=device,
-                  criterion=criterion,
-                  debug=config.debug,
-                  runid=config.runid,
-                  logdir=config.logdir,
-                  vis_interval=config.vis_interval,
-                  vis_acts_and_grads=config.vis_activations_and_gradients,
-                  num_steps_per_epoch=len(train_queue))
-
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,
-                                                       config.epochs,
-                                                       eta_min=config.learning_rate_min)
-
-
 def validate_model(model: Network, criterion: nn.Module, monitor: Monitor, valid_queue: DataLoader,
                    config: Config) -> tuple[float, float, float]:
   """
@@ -170,6 +96,7 @@ def validate_model(model: Network, criterion: nn.Module, monitor: Monitor, valid
   """
   model.eval()
   losses, accs, topk_accs = [], [], []
+  monitor.logger.info("Validating model ...")
   with torch.no_grad():
     for idx, batch in enumerate(valid_queue):
       imgs, input, target = batch
@@ -178,7 +105,6 @@ def validate_model(model: Network, criterion: nn.Module, monitor: Monitor, valid
 
       # loss
       loss = criterion(logits, target)
-      assert logits.shape == torch.Size([config.batch_size, 10])
       losses.append(loss.item())
 
       # accuracy
@@ -189,7 +115,6 @@ def validate_model(model: Network, criterion: nn.Module, monitor: Monitor, valid
 
       # topk-accuracy
       _, topk_preds = logits.topk(k=5, dim=1)
-      assert topk_preds.shape == torch.Size([config.batch_size, 5])
       topk_acc = 0.0
       for i, p in enumerate(topk_preds):
         topk_acc += float(p in target[i])
@@ -204,9 +129,9 @@ def validate_model(model: Network, criterion: nn.Module, monitor: Monitor, valid
 
 def train(model: Network, criterion: nn.Module, monitor: Monitor, architect: Architect, lr: float,
           epoch: int, optimizer: Optimizer):
+  monitor.logger.info(f"Train {epoch} epoch")
   for idx, (imgs, input_train, target_train) in enumerate(train_queue):
     model.train()
-    assert target_train.shape == torch.Size([config.batch_size])
 
     input_train, target_train = input_train.to(model.device), target_train.to(model.device)
 
@@ -222,12 +147,10 @@ def train(model: Network, criterion: nn.Module, monitor: Monitor, architect: Arc
                    unrolled=config.unrolled)
 
     optimizer.zero_grad()
-    logits = model(input_train)
-    assert logits.shape == torch.Size([config.batch_size, 10])
 
-    loss = criterion(logits, target_train)
-
+    loss = model._loss(input_train, target_train)
     loss.backward()
+
     nn.utils.clip_grad_norm_(model.parameters(), config.grad_clip)
     optimizer.step()
 
@@ -242,7 +165,7 @@ def train(model: Network, criterion: nn.Module, monitor: Monitor, architect: Arc
       if config.overfit_single_batch is True:
         bf_model, bf_criterion = model.clone(), clone_model(criterion)
         monitor.overfit_single_batch(model, input_train, target_train, input_search, target_search,
-                                     criterion, optimizer, config, lr, 100)
+                                     criterion, optimizer, alpha_optimizer, config, lr, 100)
 
         # model and critertion should not have changed
         assert models_eq(bf_model, model) == True
@@ -250,40 +173,170 @@ def train(model: Network, criterion: nn.Module, monitor: Monitor, architect: Arc
         del bf_model
         del bf_criterion
 
+    if idx % config.vis_interval == 0:
+      print(f"After {idx} steps of {epoch} epoch: {loss.item()}")
+
     if idx == 0:  # at beginning of each epoch
       if config.vis_eigenvalues:
         monitor.visualize_eigenvalues(input_search, target_search)
 
-    if idx % config.vis_interval == 0:
-      if config.vis_lrs:
-        monitor.visualize_lrs(lr)
-
     monitor.add_training_loss(loss.item())
 
 
-for epoch in range(config.epochs):
-  lr = scheduler.get_last_lr()[0]
+if __name__ == '__main__':
 
-  # train single batch
-  train(model, criterion, monitor, architect, lr, epoch, optimizer)
+  config = parse_args()
+  config.save = "search-{}-{}".format(config.save, time.strftime("%Y%m%d-%H%M%S"))
 
-  # visualize everything
-  monitor.end_epoch()
-  model.eval()
-  if config.input_dependent_baseline is True:
-    monitor.input_dependent_baseline(model, criterion)
-  if config.eval_test_batch is True:
-    monitor.eval_test_batch(f"After {epoch} epochs")
-  if config.live_validate is True:
-    validate_model(model, criterion, monitor, valid_queue, config)
-  if config.vis_alphas is True:
-    monitor.visualize_alphas(
-        F.softmax(model.alphas_normal, dim=-1).detach().cpu().numpy(),
-        F.softmax(model.alphas_reduce, dim=-1).detach().cpu().numpy())
-  if config.vis_genotypes is True:
-    monitor.visualize_genotypes(model.genotype())
+  supports_bf16 = False
+  print(f"Torch is available: {torch.cuda.is_available()}")
+  if torch.backends.mps.is_available():
+    device = torch.device("mps")
+    device_str = "mps"
+  else:
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device_str = "cuda" if torch.cuda.is_available() else "cpu"
+    if torch.cuda.is_available():
+      supports_bf16 = torch.cuda.is_bf16_supported()
+      if supports_bf16:
+        print("Using bfloat16")
+  print(f"Device is {device}")
 
-  # save model
-  torch.save(model.state_dict(), f"{config.logdir}/{config.runid}/checkpoint-{epoch}-epochs.pt")
+  torch.backends.cudnn.benchmark = True
+  torch.backends.cudnn.enabled = True
 
-  scheduler.step()
+  # set random seed
+  torch.manual_seed(config.seed)
+  torch.cuda.manual_seed(config.seed)
+  torch.cuda.manual_seed_all(config.seed)
+  np.random.seed(config.seed)
+  random.seed(config.seed)
+
+  train_transform = transforms.Compose([
+      transforms.RandomCrop(32, padding=4),
+      transforms.RandomHorizontalFlip(),
+      transforms.ToTensor(),
+      transforms.Normalize(mean=cifar10_means, std=cifar10_stds),
+  ])
+  if config.cutout:
+    train_transform.transforms.append(Cutout(config.cutout_length))
+
+  eval_transform = transforms.Compose(
+      [transforms.ToTensor(),
+       transforms.Normalize(mean=cifar10_means, std=cifar10_stds)])
+
+  train_dataset = cifar10(train=True, transform=train_transform, download=True)
+  test_dataset = cifar10(train=False, transform=eval_transform, download=True)
+
+  num_train = len(train_dataset)
+  indices = list(range(num_train))
+  split = int(np.floor(config.train_portion * num_train))
+
+  train_queue = DataLoader(
+      train_dataset,
+      batch_size=config.batch_size,
+      sampler=SubsetRandomSampler(indices[:split]),
+      pin_memory=False,
+      num_workers=config.data_num_workers,
+  )
+
+  valid_queue = DataLoader(
+      train_dataset,
+      batch_size=config.batch_size,
+      sampler=SubsetRandomSampler(indices[split:num_train]),
+      pin_memory=False,
+      num_workers=config.data_num_workers,
+  )
+
+  criterion = nn.CrossEntropyLoss()
+  if config.checkpoint is not None:
+    model = Network.load_from_file(Path(config.checkpoint))
+  else:
+    model = Network(config.init_channels, 10, config.layers, criterion, device)
+  optimizer = torch.optim.SGD(model.parameters(),
+                              config.learning_rate,
+                              momentum=config.momentum,
+                              weight_decay=config.weight_decay)
+  scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,
+                                                         config.epochs,
+                                                         eta_min=config.learning_rate_min)
+
+  alpha_optimizer = torch.optim.Adam(model.arch_parameters(),
+                                     lr=config.arch_learning_rate,
+                                     betas=(0.5, 0.999),
+                                     weight_decay=config.arch_weight_decay)
+
+  start_epoch = 0
+  if config.past_train is not None:
+    with open(config.past_train) as fstream:
+      print("Loading checkpoint ...")
+      past = PastTrainRun(**json.load(fstream))
+      start_epoch = past.epoch + 1
+      print(f"Beginning with epoch {start_epoch}")
+      model = Network.load_from_file(Path(past.checkpoint))
+      scheduler_states = torch.load(past.scheduler_checkpoint, weights_only=True)
+      optimizer.load_state_dict(scheduler_states["optimizer_state"])
+      scheduler.load_state_dict(scheduler_states["scheduler_state"])
+      alpha_optimizer.load_state_dict(scheduler_states["alpha_optimizer_state"])
+
+  print(f"Batch size is {config.batch_size} and we'll need {len(train_queue)} steps")
+
+  model.to(device)
+  architect = Architect(model, config, alpha_optimizer)
+  monitor = Monitor(model,
+                    architect=architect,
+                    test_dataset=test_dataset,
+                    device=device,
+                    epoch=start_epoch,
+                    criterion=criterion,
+                    debug=config.debug,
+                    runid=config.runid,
+                    logdir=config.logdir,
+                    vis_interval=config.vis_interval,
+                    vis_acts_and_grads=config.vis_activations_and_gradients,
+                    num_steps_per_epoch=len(train_queue))
+
+  for epoch in range(start_epoch, config.epochs):
+    lr = scheduler.get_last_lr()[0]
+
+    # train single batch
+    train(model, criterion, monitor, architect, lr, epoch, optimizer)
+
+    # visualize everything
+    model.eval()
+    if config.input_dependent_baseline is True:
+      monitor.input_dependent_baseline(model, criterion)
+    if config.eval_test_batch is True:
+      monitor.eval_test_batch(f"After {epoch} epochs")
+    if config.live_validate is True:
+      validate_model(model, criterion, monitor, valid_queue, config)
+    if config.vis_alphas is True:
+      monitor.visualize_alphas(
+          F.softmax(model.alphas_normal, dim=1).detach().cpu().numpy(),
+          F.softmax(model.alphas_reduce, dim=1).detach().cpu().numpy())
+    if config.vis_genotypes is True:
+      monitor.visualize_genotypes(model.genotype())
+    if config.vis_lrs:
+      monitor.visualize_lrs(lr)
+
+    # save model
+    model_checkpoint_path = f"{config.logdir}/{config.runid}/checkpoint-{epoch}-epochs.pkl"
+    model.save_to_file(Path(model_checkpoint_path))
+    optimizer_checkpoint_path = f"{config.logdir}/{config.runid}/optimizer.pkl"
+    train_checkpoint_path = f"{config.logdir}/{config.runid}/last_run.json"
+    monitor.logger.info(f"Save training to {train_checkpoint_path}")
+    checkpoint = {
+        "optimizer_state": optimizer.state_dict(),
+        "scheduler_state": scheduler.state_dict(),
+        "alpha_optimizer_state": alpha_optimizer.state_dict()
+    }
+    torch.save(checkpoint, optimizer_checkpoint_path)
+    train_checkpoint = PastTrainRun(epoch=epoch,
+                                    checkpoint=model_checkpoint_path,
+                                    scheduler_checkpoint=optimizer_checkpoint_path)
+    with open(train_checkpoint_path, "w") as fstream:
+      json.dump(asdict(train_checkpoint), fstream)
+
+    monitor.end_epoch()
+    scheduler.step()
+    break  # one epoch per SLURM run
