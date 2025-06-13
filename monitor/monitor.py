@@ -90,10 +90,13 @@ class Monitor:
                           Line(title="Validation accuracy", ylabel="Loss", grid=True))
     self.valid_topk_acc = Live(self.path / "validation_topk_acc.png",
                                Line(title="Validation topk accuracy", ylabel="Loss", grid=True))
-    self.vis_alphas_normal = Live(self.path / "alphas_normal.png",
-                                  VisAlpha(steps=model._steps, primitives=self.primitives))
-    self.vis_alphas_reduce = Live(self.path / "alphas_reduce.png",
-                                  VisAlpha(steps=model._steps, primitives=self.primitives))
+    last_5 = (self.epoch // 5) * 5
+    self.vis_alphas_normal = Live(self.path / f"alphas_normal-{last_5}-{last_5+4}.png",
+                                  data_path=self.path / "alphas_normal.png.npy",
+                                  plot=VisAlpha(steps=model._steps, primitives=self.primitives))
+    self.vis_alphas_reduce = Live(self.path / f"alphas_reduce-{last_5}-{last_5+4}.png",
+                                  data_path=self.path / "alphas_reduce.png.npy",
+                                  plot=VisAlpha(steps=model._steps, primitives=self.primitives))
     self.vis_alphas_distribution: LiveGrid[Hist] = LiveGrid(self.path / "alphas_distribution.png",
                                                             Grid(Hist(50), rows=0, cols=2))
     self.valid_train_ref_idx: int = 0

@@ -16,9 +16,12 @@ def clone_optimizer(optimizer: optim.Optimizer, model: nn.Module) -> optim.Optim
 
 
 def models_eq(m1: nn.Module, m2: nn.Module) -> bool:
-  for p1, p2 in zip(m1.parameters(), m2.parameters()):
-    if p1.data.ne(p2.data).sum() > 0:
+  for (n1, p1), (n2, p2) in zip(m1.named_parameters(), m2.named_parameters()):
+    if p1.data.ne(p2.data).abs().sum() > 0:
+      print(f"Parameters {n1} and {n2} differ by {p1.data.ne(p2.data).abs().sum()}")
       return False
+    else:
+      print(f"Parameters {n1} and {n2} are equal")
   return True
 
 

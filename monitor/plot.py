@@ -229,12 +229,13 @@ class Hist(Plot):
 
 class VisAlpha(Plot):
 
-  def __init__(self, steps: int, primitives: list[str]):
+  def __init__(self, steps: int, primitives: list[str], only_last: int = 5):
     self.steps = steps
     self.primitives = primitives
     self.k = sum(1 for i in range(steps) for n in range(2 + i))
     self.num_ops = len(self.primitives)
     self.colors = plt.cm.tab10.colors[:self.num_ops]  # type: ignore
+    self.only_last = only_last
 
   def draw_graph_subplot(self, ax: Axes, step: int, weights: np.ndarray):
     G = nx.DiGraph()
@@ -290,23 +291,24 @@ class VisAlpha(Plot):
 
   def plot(self, data: np.ndarray, fig: Figure | None = None, axes: Axes | None = None) -> Figure:
     # Create one subplot per step
-    fig, ax = plt.subplots(data.shape[0],
+    row_start = ((data.shape[0] - 1) // 5) * 5
+    row_end = data.shape[0]
+    rows = row_end - row_start
+    fig, ax = plt.subplots(rows,
                            self.steps,
                            squeeze=False,
-                           figsize=(25 * self.steps, 7 * data.shape[0]),
+                           figsize=(25 * self.steps, 7 * rows),
                            gridspec_kw={'hspace': 0.5})
 
-    for row in range(data.shape[0]):
+    for row in range(row_start, row_end):
       offset = 0
       for col in range(self.steps):
-        self.draw_graph_subplot(ax[row, col],
+        self.draw_graph_subplot(ax[row - row_start, col],
                                 step=col + 2,
                                 weights=data[row][offset:offset + col + 2])
         offset += col + 2
-
-    for i in range(data.shape[0]):
-      y_pos = 0.92 - i * 0.48  # Adjust spacing as needed based on figure size
-      fig.text(0.5, y_pos, f"{i}th Epoch", va='center', ha='left', fontsize=25, fontweight='bold')
+      #y_pos = 0.92 - (row - row_start) * 0.48  # Adjust spacing as needed based on figure size
+      #fig.text(0.5, y_pos, f"{row}th Epoch", va='center', ha='left', fontsize=25, fontweight='bold')
 
     legend_labels = self.primitives
     handles = [

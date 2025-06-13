@@ -13,10 +13,6 @@ import torch.nn as nn
 from torch.optim import Optimizer
 from pathlib import Path
 from dataclasses import asdict
-import multiprocessing as mp
-
-mp.set_start_method('spawn', force=True)
-
 from dataset.transform import Cutout
 from dataset.cifar import cifar10_means, cifar10_stds
 from dataset.wrapper import cifar10
@@ -174,7 +170,7 @@ def train(model: Network, criterion: nn.Module, monitor: Monitor, architect: Arc
         del bf_criterion
 
     if idx % config.vis_interval == 0:
-      print(f"After {idx} steps of {epoch} epoch: {loss.item()}")
+      monitor.logger.info(f"After {idx} steps of {epoch} epoch: {loss.item()}")
 
     if idx == 0:  # at beginning of each epoch
       if config.vis_eigenvalues:
@@ -249,24 +245,7 @@ if __name__ == '__main__':
   )
 
   criterion = nn.CrossEntropyLoss()
-  if config.checkpoint is not None:
-    model = Network.load_from_file(Path(config.checkpoint))
-  else:
-    model = Network(config.init_channels, 10, config.layers, criterion, device)
-  optimizer = torch.optim.SGD(model.parameters(),
-                              config.learning_rate,
-                              momentum=config.momentum,
-                              weight_decay=config.weight_decay)
-  scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,
-                                                         config.epochs,
-                                                         eta_min=config.learning_rate_min)
 
-  alpha_optimizer = torch.optim.Adam(model.arch_parameters(),
-                                     lr=config.arch_learning_rate,
-                                     betas=(0.5, 0.999),
-                                     weight_decay=config.arch_weight_decay)
-
-  start_epoch = 0
   if config.past_train is not None:
     with open(config.past_train) as fstream:
       print("Loading checkpoint ...")
@@ -274,10 +253,37 @@ if __name__ == '__main__':
       start_epoch = past.epoch + 1
       print(f"Beginning with epoch {start_epoch}")
       model = Network.load_from_file(Path(past.checkpoint))
+      optimizer = torch.optim.SGD(model.parameters(),
+                                  config.learning_rate,
+                                  momentum=config.momentum,
+                                  weight_decay=config.weight_decay)
+      scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,
+                                                             config.epochs,
+                                                             eta_min=config.learning_rate_min)
+
+      alpha_optimizer = torch.optim.Adam(model.arch_parameters(),
+                                         lr=config.arch_learning_rate,
+                                         betas=(0.5, 0.999),
+                                         weight_decay=config.arch_weight_decay)
       scheduler_states = torch.load(past.scheduler_checkpoint, weights_only=True)
       optimizer.load_state_dict(scheduler_states["optimizer_state"])
       scheduler.load_state_dict(scheduler_states["scheduler_state"])
       alpha_optimizer.load_state_dict(scheduler_states["alpha_optimizer_state"])
+  else:
+    start_epoch = 0
+    model = Network(config.init_channels, 10, config.layers, criterion, device)
+    optimizer = torch.optim.SGD(model.parameters(),
+                                config.learning_rate,
+                                momentum=config.momentum,
+                                weight_decay=config.weight_decay)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,
+                                                           config.epochs,
+                                                           eta_min=config.learning_rate_min)
+
+    alpha_optimizer = torch.optim.Adam(model.arch_parameters(),
+                                       lr=config.arch_learning_rate,
+                                       betas=(0.5, 0.999),
+                                       weight_decay=config.arch_weight_decay)
 
   print(f"Batch size is {config.batch_size} and we'll need {len(train_queue)} steps")
 
@@ -297,6 +303,7 @@ if __name__ == '__main__':
                     num_steps_per_epoch=len(train_queue))
 
   for epoch in range(start_epoch, config.epochs):
+    print(f"Epoch is {epoch}")
     lr = scheduler.get_last_lr()[0]
 
     # train single batch
@@ -325,15 +332,15 @@ if __name__ == '__main__':
     optimizer_checkpoint_path = f"{config.logdir}/{config.runid}/optimizer.pkl"
     train_checkpoint_path = f"{config.logdir}/{config.runid}/last_run.json"
     monitor.logger.info(f"Save training to {train_checkpoint_path}")
-    checkpoint = {
-        "optimizer_state": optimizer.state_dict(),
-        "scheduler_state": scheduler.state_dict(),
-        "alpha_optimizer_state": alpha_optimizer.state_dict()
-    }
+    osd = optimizer.state_dict()
+    ssd = scheduler.state_dict()
+    asd = alpha_optimizer.state_dict()
+    checkpoint = {"optimizer_state": osd, "scheduler_state": ssd, "alpha_optimizer_state": asd}
     torch.save(checkpoint, optimizer_checkpoint_path)
     train_checkpoint = PastTrainRun(epoch=epoch,
                                     checkpoint=model_checkpoint_path,
                                     scheduler_checkpoint=optimizer_checkpoint_path)
+    print(f"Saving {asdict(train_checkpoint)} to {train_checkpoint_path}")
     with open(train_checkpoint_path, "w") as fstream:
       json.dump(asdict(train_checkpoint), fstream)
 

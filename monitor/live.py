@@ -19,8 +19,14 @@ class Live(Generic[T]):
   Parent class to update plots live during training.
   """
 
-  def __init__(self, path: Path, plot: T, init_data: np.ndarray | None = None):
-    self.data_path = path.with_name(f"{path.name}.npy")
+  def __init__(self,
+               path: Path,
+               plot: T,
+               init_data: np.ndarray | None = None,
+               data_path: Path | None = None):
+    self.data_path = data_path if data_path is not None else path.with_name(f"{path.name}.npy")
+    if data_path is not None:
+      print(f"datapath is {self.data_path}")
     if self.data_path.exists() and init_data is None:
       self.data = np.load(self.data_path.as_posix())
     else:

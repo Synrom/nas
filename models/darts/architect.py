@@ -1,6 +1,7 @@
 from __future__ import annotations
 import torch
 import numpy as np
+import torch._dynamo as dynamo
 import torch.nn as nn
 from abc import ABC, abstractmethod
 from torch.autograd import Variable
@@ -74,8 +75,9 @@ class Architect(object):
 
     # I think this is network_optimizer specific.
     try:
-      moment = _concat(network_optimizer.state[v]["momentum_buffer"]
-                       for v in self.model.parameters()).mul_(self.network_momentum)
+      with dynamo.disable():  # avoid compiling network_optimizer
+        moment = _concat(network_optimizer.state[v]["momentum_buffer"]
+                         for v in self.model.parameters()).mul_(self.network_momentum)
     except:
       moment = torch.zeros_like(theta)
 
