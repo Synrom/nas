@@ -112,8 +112,7 @@ class Monitor:
     self.test_batch_vis: None | LiveGrid = None
     self.vis_genotypes: LiveGrid[GenotypeGraph] = LiveGrid(
         self.path / "graphs.png", Grid(GenotypeGraph(), cols=2, rows=0, col_size=6, row_size=4))
-    self.vis_lrs = Live(self.path / "learning_rates.png",
-                        TwoLines("Model LR", "Alphas LR", "Learning rates", grid=True))
+    self.vis_lrs = Live(self.path / "learning_rates.png", Line("Model Learning Rate", grid=True))
     self.vis_acts_and_grads = vis_acts_and_grads
     self.alpha_hook: Hook | None = None
     self.hessian_hook: Hook | None = None
@@ -228,9 +227,7 @@ class Monitor:
 
   def visualize_lrs(self, model_lr: float):
     self.logger.info("Visualize LRs ...")
-    assert len(self.architect.optimizer.param_groups) == 1
-    alpha_lr = self.architect.optimizer.param_groups[0]["lr"]
-    self.vis_lrs.add(np.array([model_lr, alpha_lr])[:, np.newaxis], axis=1)
+    self.vis_lrs.add(nparray(model_lr))
     self.vis_lrs.commit()
 
   def add_training_loss(self, loss: float):

@@ -304,7 +304,7 @@ if __name__ == '__main__':
 
   for epoch in range(start_epoch, config.epochs):
     print(f"Epoch is {epoch}")
-    lr = scheduler.get_last_lr()[0]
+    lr = scheduler.get_lr()[0]
 
     # train single batch
     train(model, criterion, monitor, architect, lr, epoch, optimizer)
