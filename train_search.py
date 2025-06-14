@@ -18,17 +18,12 @@ from dataset.cifar import cifar10_means, cifar10_stds
 from dataset.wrapper import cifar10
 from monitor.monitor import Monitor
 from utils import clone_model, models_eq
-from config import Config, PastTrainRun
+from config import SearchConfig, PastTrainRun, add_neglatible_bool_to_parser
 from models.darts.model_search import Network
 from models.darts.architect import Architect
 
 
-def add_neglatible_bool_to_parser(parser: argparse.ArgumentParser, cmd: str, name: str):
-  parser.add_argument(cmd, action="store_false", dest=name)
-  parser.set_defaults(**{name: True})
-
-
-def parse_args() -> Config:
+def parse_args() -> SearchConfig:
   parser = argparse.ArgumentParser("cifar")
   parser.add_argument("--batch_size", type=int, default=64, help="batch size")
   parser.add_argument("--learning_rate", type=float, default=0.025, help="init learning rate")
@@ -82,11 +77,11 @@ def parse_args() -> Config:
                       default=200,
                       help="Interval to visualize training loss")
   args = parser.parse_args()
-  return Config(**vars(args))
+  return SearchConfig(**vars(args))
 
 
 def validate_model(model: Network, criterion: nn.Module, monitor: Monitor, valid_queue: DataLoader,
-                   config: Config) -> tuple[float, float, float]:
+                   config: SearchConfig) -> tuple[float, float, float]:
   """
   Run model on valid_queue and report results to monitor.
   """
@@ -174,7 +169,7 @@ def train(model: Network, criterion: nn.Module, monitor: Monitor, architect: Arc
 
     if idx == 0:  # at beginning of each epoch
       if config.vis_eigenvalues:
-        monitor.visualize_eigenvalues(input_search, target_search)
+        monitor.visualize_eigenvalues(input_search, target_search, architect)
 
     monitor.add_training_loss(loss.item())
 
@@ -182,7 +177,6 @@ def train(model: Network, criterion: nn.Module, monitor: Monitor, architect: Arc
 if __name__ == '__main__':
 
   config = parse_args()
-  config.save = "search-{}-{}".format(config.save, time.strftime("%Y%m%d-%H%M%S"))
 
   supports_bf16 = False
   print(f"Torch is available: {torch.cuda.is_available()}")
@@ -314,7 +308,7 @@ if __name__ == '__main__':
     if config.input_dependent_baseline is True:
       monitor.input_dependent_baseline(model, criterion)
     if config.eval_test_batch is True:
-      monitor.eval_test_batch(f"After {epoch} epochs")
+      monitor.eval_test_batch(f"After {epoch} epochs", model)
     if config.live_validate is True:
       validate_model(model, criterion, monitor, valid_queue, config)
     if config.vis_alphas is True:
@@ -325,6 +319,8 @@ if __name__ == '__main__':
       monitor.visualize_genotypes(model.genotype())
     if config.vis_lrs:
       monitor.visualize_lrs(lr)
+
+    scheduler.step()
 
     # save model
     model_checkpoint_path = f"{config.logdir}/{config.runid}/checkpoint-{epoch}-epochs.pkl"
@@ -344,6 +340,5 @@ if __name__ == '__main__':
     with open(train_checkpoint_path, "w") as fstream:
       json.dump(asdict(train_checkpoint), fstream)
 
-    monitor.end_epoch()
-    scheduler.step()
+    monitor.end_epoch(model, architect)
     break  # one epoch per SLURM run

@@ -109,6 +109,8 @@ class LiveGrid(Live, Generic[T2]):
       for col in range(self.cols):
         if (row, col) in self.plot.manual:
           self.plot.manual[(row, col)](fig, axes[row, col])
+        elif col in self.plot.col_plots:
+          self.plot.col_plots[col].plot(self.grid_data[row][col], fig, axes[row, col])
         elif self.grid_data[row][col] is not None:
           self.plot.default.plot(self.grid_data[row][col], fig, axes[row, col])
         if (row, col) in self.plot.titles:

@@ -81,9 +81,14 @@ class TwoLines(Plot):
 
 class Line(Plot):
 
-  def __init__(self, title: str | None = None, ylabel: str | None = None, grid: bool = False):
+  def __init__(self,
+               title: str | None = None,
+               ylabel: str | None = None,
+               xlabel: str | None = None,
+               grid: bool = False):
     self.title = title
     self.ylabel = ylabel
+    self.xlabel = xlabel
     self.grid = grid
 
   def plot(self, data: np.ndarray, fig: Figure | None = None, axes: Axes | None = None) -> Figure:
@@ -93,6 +98,8 @@ class Line(Plot):
       axes.set_title(self.title)
     if self.ylabel:
       axes.set_ylabel(self.ylabel)
+    if self.xlabel:
+      axes.set_xlabel(self.xlabel)
     axes.grid(self.grid)
     return fig
 
@@ -127,7 +134,8 @@ class Image(Plot):
                aspect: Literal['equal', 'auto'] | float | None = None,
                vmin: float | None = None,
                vmax: float | None = None,
-               colormap: ColorMapOptions | None = None):
+               colormap: ColorMapOptions | None = None,
+               title: str | None = None):
     self.cmap = cmap
     self.aspect = aspect
     self.vmin = vmin
@@ -150,12 +158,14 @@ class Bar(Plot):
                ylim: tuple[int, int] | None = None,
                title: str | None = None,
                xticks: list[int] | None = None,
-               rotation: float | None = None):
+               rotation: float | None = None,
+               highlight_label: str | None = None):
     self.labels = labels
     self.ylim = ylim
     self.title = title
     self.xticks = xticks
     self.rotation = rotation
+    self.highlight_label = highlight_label
 
   def plot(self, data: np.ndarray, fig: Figure | None = None, axes: Axes | None = None) -> Figure:
     fig, axes = self.fig_and_axes(fig, axes)
@@ -174,6 +184,8 @@ class Bar(Plot):
       for tick in axes.get_xticklabels():
         tick.set_rotation(self.rotation)
         tick.set_horizontalalignment("right")
+        if self.highlight_label is not None and tick.get_text() == self.highlight_label:
+          tick.set_color('red')
     return fig
 
 
@@ -196,6 +208,7 @@ class Grid(Generic[T]):
     # save manually set grid cells
     self.manual: dict[tuple[int, int], LoadedPlot] = {}
     self.titles: dict[tuple[int, int], str] = {}
+    self.col_plots: dict[int, Plot] = {}
 
   def plot(self, data: np.ndarray, fig: Figure | None = None, ax: Axes | None = None) -> Figure:
     assert len(data.shape) > 2
@@ -208,6 +221,8 @@ class Grid(Generic[T]):
       for col in range(self.cols):
         if (row, col) in self.manual:
           fig = self.manual[(row, col)](fig, axes[row, col])
+        elif col in self.col_plots:
+          fig = self.col_plots[col].plot(data[row, col], fig, axes[row, col])
         else:
           fig = self.default.plot(data[row, col], fig, axes[row, col])
         if (row, col) in self.titles:

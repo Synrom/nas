@@ -9,7 +9,7 @@ from torch.optim import Optimizer
 from typing import Iterable, Callable
 from numpy.linalg import eigvals
 
-from config import Config
+from config import SearchConfig
 from models.darts.model_search import Network
 
 
@@ -50,7 +50,7 @@ class Architect(object):
     This class handles the training of the network during search stage.
     """
 
-  def __init__(self, model: Network, args: Config, optimizer: Optimizer):
+  def __init__(self, model: Network, args: SearchConfig, optimizer: Optimizer):
     self.network_momentum = args.momentum
     self.network_weight_decay = args.weight_decay
     self.model = model

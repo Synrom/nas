@@ -1,4 +1,6 @@
 from typing import NamedTuple
+from pathlib import Path
+import json
 
 
 class Genotype(NamedTuple):
@@ -134,3 +136,17 @@ DARTS_V2 = Genotype(
 )
 
 DARTS = DARTS_V2
+
+
+def save_genotype(path: Path, genotype: Genotype):
+  with open(path.as_posix(), "w") as fstream:
+    json.dump(genotype, fstream)
+
+
+def load_genotype(path: Path) -> Genotype:
+  with open(path.as_posix(), "r") as fstream:
+    genotype = json.load(fstream)
+  return Genotype(normal=genotype[0],
+                  normal_concat=genotype[1],
+                  reduce=genotype[2],
+                  reduce_concat=genotype[3])
