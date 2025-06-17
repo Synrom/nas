@@ -147,9 +147,11 @@ class Monitor:
 
     def backward_check(module, grad_input, grad_output):
       if any(torch.isnan(g).any() or torch.isinf(g).any() for g in grad_input if g is not None):
-        print(f"[BACKWARD] NaN or Inf detected in grad_input of {module.__class__.__name__}")
+        self.logger.error(
+            f"[BACKWARD] NaN or Inf detected in grad_input of {module.__class__.__name__}")
       if any(torch.isnan(g).any() or torch.isinf(g).any() for g in grad_output if g is not None):
-        print(f"[BACKWARD] NaN or Inf detected in grad_output of {module.__class__.__name__}")
+        self.logger.error(
+            f"[BACKWARD] NaN or Inf detected in grad_output of {module.__class__.__name__}")
       if module in self.backward_checks:
         self.backward_checks[module].remove()
         self.backward_checks.pop(module)
@@ -259,11 +261,14 @@ class Monitor:
     if self.debug is True:
       self.training_loss.commit()
 
-  def end_epoch(self, model: SearchNetwork | NetworkCIFAR, architect: Architect | None = None):
+  def end_epoch(self,
+                model: SearchNetwork | NetworkCIFAR,
+                architect: Architect | None = None,
+                visualize: bool = True):
     self.epoch += 1
     self.steps = 0
     self.training_loss.commit()
-    if self.vis_acts_and_grads:
+    if self.vis_acts_and_grads and visualize:
       self.add_hooks(model,
                      architect)  # visualize activations and gradients at beginning of each epoch
     if self.training_loss.data is not None:
@@ -285,7 +290,7 @@ class Monitor:
     if self.test_batch_vis is None:
       imgs = imgs.permute(0, 2, 3, 1)
       plot: Grid[Bar] = Grid(Bar(), rows=1, cols=cols, col_size=3, row_size=2)
-      self.test_batch_vis = LiveGrid(self.path / "test_batch_predictions.png", grid=plot)
+      self.test_batch_vis = LiveGrid(self.path / "test_batch_predictions_later.png", grid=plot)
       for i, col in enumerate(range(cols)):
         label = self.label2name[target[i].item()]
         plot.manual[0, col] = plot_load_data(Image(), imgs[col])

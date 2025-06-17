@@ -21,6 +21,7 @@ from utils import clone_model, models_eq
 from config import SearchConfig, PastTrainRun, add_neglatible_bool_to_parser
 from models.darts.model_search import Network
 from models.darts.architect import Architect
+from models.darts.genotypes import save_genotype
 
 
 def parse_args() -> SearchConfig:
@@ -44,7 +45,6 @@ def parse_args() -> SearchConfig:
   parser.add_argument("--grad_clip", type=float, default=5, help="gradient clipping")
   parser.add_argument("--train_portion", type=float, default=0.5, help="portion of training data")
   parser.add_argument("--data_num_workers", type=int, default=2, help="num workers of data loaders")
-  parser.add_argument("--checkpoint", type=str, help="path to checkpoint pickle-file")
   parser.add_argument("--past_train", type=str, default=None, help="Optional path to previous train.")
   parser.add_argument("--unrolled",
                       action="store_true",
@@ -67,7 +67,6 @@ def parse_args() -> SearchConfig:
   add_neglatible_bool_to_parser(parser, "--no-live-validate", "live_validate")
   parser.add_argument("--debug", action="store_true", dest="debug")
   parser.set_defaults(debug=False)
-  add_neglatible_bool_to_parser(parser, "--no-save-checkpoint", "save_checkpoint")
   add_neglatible_bool_to_parser(parser, "--no-vis-alphas", "vis_alphas")
   add_neglatible_bool_to_parser(parser, "--no-vis-genotypes", "vis_genotypes")
   add_neglatible_bool_to_parser(parser, "--no-vis-lrs", "vis_lrs")
@@ -341,4 +340,11 @@ if __name__ == '__main__':
       json.dump(asdict(train_checkpoint), fstream)
 
     monitor.end_epoch(model, architect)
+
+    # save genotype
+    if epoch == config.epochs - 1:
+      genotype_path = monitor.path / f"{config.runid}_genotype.json"
+      save_genotype(genotype_path, model.genotype())
+      monitor.logger.info(f"Saved resulting genotype to {genotype_path.as_posix()}.")
+
     break  # one epoch per SLURM run

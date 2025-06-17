@@ -34,7 +34,6 @@ class SearchConfig:
   runid: str = "train"
   logdir: str = "log"
   data_num_workers: int = 2
-  checkpoint: str | None = None
   vis_activations_and_gradients: bool = True
   debug: bool = False
   vis_first_batch_inputs: bool = True

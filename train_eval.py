@@ -1,21 +1,14 @@
-import os
-import sys
-import time
 import json
-import glob
+import time
 from dataclasses import asdict
 from pathlib import Path
 import numpy as np
 import torch
-import utils
-import logging
 import argparse
 import torch.nn as nn
-import torch.utils
 from torchvision import transforms
 from dataset.transform import Cutout
 import torch.backends.cudnn as cudnn
-from torch.autograd import Variable
 from dataset.cifar import cifar10_means, cifar10_stds
 from dataset.wrapper import cifar10
 from torch.utils.data import DataLoader
@@ -35,6 +28,7 @@ def parse_args() -> EvalConfig:
   parser.add_argument('--weight_decay', type=float, default=3e-4, help='weight decay')
   parser.add_argument('--epochs', type=int, default=600, help='num of training epochs')
   parser.add_argument('--init_channels', type=int, default=36, help='num of init channels')
+  parser.add_argument("--runid", type=str, default="train", help="Run ID of this training run")
   parser.add_argument('--layers', type=int, default=20, help='total number of layers')
   parser.add_argument('--cutout', action='store_true', default=False, help='use cutout')
   parser.add_argument('--cutout_length', type=int, default=16, help='cutout length')
@@ -139,6 +133,7 @@ def infer(valid_queue: DataLoader, model: NetworkCIFAR, criterion: nn.Module):
 
 
 if __name__ == "__main__":
+  start_time = time.time()
 
   config = parse_args()
 
@@ -241,10 +236,12 @@ if __name__ == "__main__":
 
     train(train_queue, model, criterion, optimizer, monitor)
 
+    visualize = (epoch % config.vis_interval) == 0
+
     model.eval()
     if config.live_validate is True:
       infer(valid_queue, model, criterion)
-    if config.eval_test_batch is True:
+    if config.eval_test_batch is True and visualize is True:
       monitor.eval_test_batch(f"After {epoch} epochs", model)
     if config.input_dependent_baseline is True:
       monitor.input_dependent_baseline(model, criterion)
@@ -253,20 +250,30 @@ if __name__ == "__main__":
 
     scheduler.step()
 
-    model_checkpoint_path = f"{config.logdir}/{config.runid}/checkpoint-{epoch}-epochs.pkl"
-    model.save_to_file(Path(model_checkpoint_path))
-    optimizer_checkpoint_path = f"{config.logdir}/{config.runid}/optimizer.pkl"
-    train_checkpoint_path = f"{config.logdir}/{config.runid}/last_run.json"
-    monitor.logger.info(f"Save training to {train_checkpoint_path}")
-    osd = optimizer.state_dict()
-    ssd = scheduler.state_dict()
-    checkpoint = {"optimizer_state": osd, "scheduler_state": ssd}
-    torch.save(checkpoint, optimizer_checkpoint_path)
-    train_checkpoint = PastTrainRun(epoch=epoch,
-                                    checkpoint=model_checkpoint_path,
-                                    scheduler_checkpoint=optimizer_checkpoint_path)
-    print(f"Saving {asdict(train_checkpoint)} to {train_checkpoint_path}")
-    with open(train_checkpoint_path, "w") as fstream:
-      json.dump(asdict(train_checkpoint), fstream)
+    stop = False
+    current_time = time.time()
+    if current_time - start_time >= 60 * 45:  # stop after 45 mins
+      monitor.logger.info("Restart after half an hour")
+      stop = True
 
-    monitor.end_epoch(model)
+    if stop or visualize:
+      model_checkpoint_path = f"{config.logdir}/{config.runid}/checkpoint-{epoch}-epochs.pkl"
+      model.save_to_file(Path(model_checkpoint_path))
+      optimizer_checkpoint_path = f"{config.logdir}/{config.runid}/optimizer.pkl"
+      train_checkpoint_path = f"{config.logdir}/{config.runid}/last_run.json"
+      monitor.logger.info(f"Save training to {train_checkpoint_path}")
+      osd = optimizer.state_dict()
+      ssd = scheduler.state_dict()
+      checkpoint = {"optimizer_state": osd, "scheduler_state": ssd}
+      torch.save(checkpoint, optimizer_checkpoint_path)
+      train_checkpoint = PastTrainRun(epoch=epoch,
+                                      checkpoint=model_checkpoint_path,
+                                      scheduler_checkpoint=optimizer_checkpoint_path)
+      print(f"Saving {asdict(train_checkpoint)} to {train_checkpoint_path}")
+      with open(train_checkpoint_path, "w") as fstream:
+        json.dump(asdict(train_checkpoint), fstream)
+
+    monitor.end_epoch(model, visualize=visualize)
+
+    if stop:
+      break
