@@ -67,21 +67,22 @@ class LiveGrid(Live, Generic[T2]):
   Live for Grids
   """
 
-  def __init__(self, path: Path, grid: Grid[T2]):
+  def __init__(self, path: Path, grid: Grid[T2], persist: bool = True):
     self.path = path
     self.plot = grid
     self.rows = self.plot.rows
     self.cols = self.plot.cols
     self.data_path = path.with_name(f"{path.name}.npy")
     self.data_path_titles = path.with_name(f"{path.name}_titles.json")
-    if self.data_path.exists():
+    self.persist = persist
+    if self.data_path.exists() and self.persist:
       with open(self.data_path.as_posix(), "rb") as fstream:
         self.grid_data: list[list[np.ndarray | None]] = pickle.load(fstream)
       self.rows = len(self.grid_data)
       self.plot.rows = self.rows
     else:
       self.grid_data = [[None for c in range(self.cols)] for r in range(self.rows)]
-    if self.data_path_titles.exists():
+    if self.data_path_titles.exists() and self.persist:
       with open(self.data_path_titles.as_posix(), "rb") as fstream:
         self.plot.titles = pickle.load(fstream)
 
@@ -97,10 +98,11 @@ class LiveGrid(Live, Generic[T2]):
     return self.plot.rows - 1
 
   def commit(self):
-    with open(self.data_path_titles.as_posix(), "wb") as fstream:
-      pickle.dump(self.plot.titles, fstream)
-    with open(self.data_path.as_posix(), "wb") as fstream:
-      pickle.dump(self.grid_data, fstream)
+    if self.persist:
+      with open(self.data_path_titles.as_posix(), "wb") as fstream:
+        pickle.dump(self.plot.titles, fstream)
+      with open(self.data_path.as_posix(), "wb") as fstream:
+        pickle.dump(self.grid_data, fstream)
     fig, axes = plt.subplots(self.rows,
                              self.cols,
                              squeeze=False,

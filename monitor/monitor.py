@@ -173,7 +173,7 @@ class Monitor:
       self.register_hessian_hook(rows, 1, architect)
     rows += 1
     self.hook_vis = LiveGrid(self.path / f"epoch-{self.epoch-1}-activations-and-gradients.png",
-                             Grid(Hist(50), rows, 2))
+                             Grid(Hist(50), rows, 2), persist=False)
 
   def register_alpha_hook(self, row: int, col: int, architect: Architect):
 
