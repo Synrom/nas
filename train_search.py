@@ -340,6 +340,7 @@ if __name__ == '__main__':
       json.dump(asdict(train_checkpoint), fstream)
 
     monitor.end_epoch(model, architect)
+    monitor.commit()
 
     # save genotype
     if epoch == config.epochs - 1:

@@ -256,7 +256,7 @@ if __name__ == "__main__":
       monitor.logger.info("Restart after half an hour")
       stop = True
 
-    if stop or visualize:
+    if stop or visualize or epoch == config.epochs - 1:
       model_checkpoint_path = f"{config.logdir}/{config.runid}/checkpoint-{epoch}-epochs.pkl"
       model.save_to_file(Path(model_checkpoint_path))
       optimizer_checkpoint_path = f"{config.logdir}/{config.runid}/optimizer.pkl"
@@ -272,8 +272,10 @@ if __name__ == "__main__":
       print(f"Saving {asdict(train_checkpoint)} to {train_checkpoint_path}")
       with open(train_checkpoint_path, "w") as fstream:
         json.dump(asdict(train_checkpoint), fstream)
-
-    monitor.end_epoch(model, visualize=visualize)
+      monitor.end_epoch(model, visualize=visualize)
+      monitor.commit()
+    else:
+      monitor.end_epoch(model, visualize=visualize)
 
     if stop:
       break
