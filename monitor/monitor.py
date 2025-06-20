@@ -111,8 +111,6 @@ class Monitor:
     self.backward_hooks: dict[nn.Module, torch.utils.hooks.RemovableHandle] = {}
     self.forward_checks: dict[nn.Module, torch.utils.hooks.RemovableHandle] = {}
     self.backward_checks: dict[nn.Module, torch.utils.hooks.RemovableHandle] = {}
-    self.hook_fig: None | plt.Figure = None
-    self.hook_axes: None | plt.Axes = None
     self.hook_vis: None | LiveGrid = None
     self.test_batch_vis: None | LiveGrid = None
     self.vis_genotypes: LiveGrid[GenotypeGraph] = LiveGrid(
@@ -125,6 +123,21 @@ class Monitor:
                             Line(title="Hessian Eigenvalues", ylabel="Dominant Eigenvalue"))
     if self.vis_acts_and_grads:
       self.add_hooks(model, architect)
+
+  def commit(self):
+    self.training_loss.commit()
+    self.smoothed_training_loss.commit()
+    self.valid_loss.commit()
+    self.valid_acc.commit()
+    self.valid_topk_acc.commit()
+    self.valid_err_rate.commit()
+    if vis := getattr(self, "vis_alphas_normal", None): vis.commit()
+    if vis := getattr(self, "vis_alphas_reduce", None): vis.commit()
+    if vis := getattr(self, "vis_alphas_distribution", None): vis.commit()
+    if self.test_batch_vis: self.test_batch_vis.commit()
+    self.vis_genotypes.commit()
+    self.vis_lrs.commit()
+    self.vis_eigvals.commit()
 
   def add_hooks(self, model: SearchNetwork | NetworkCIFAR, architect: None | Architect = None):
     if self.hook_vis:
@@ -253,13 +266,10 @@ class Monitor:
   def visualize_lrs(self, model_lr: float):
     self.logger.info("Visualize LRs ...")
     self.vis_lrs.add(nparray(model_lr))
-    self.vis_lrs.commit()
 
   def add_training_loss(self, loss: float):
     self.steps += 1
     self.training_loss.add(nparray(loss))
-    if self.debug is True:
-      self.training_loss.commit()
 
   def end_epoch(self,
                 model: SearchNetwork | NetworkCIFAR,
@@ -267,14 +277,12 @@ class Monitor:
                 visualize: bool = True):
     self.epoch += 1
     self.steps = 0
-    self.training_loss.commit()
     if self.vis_acts_and_grads and visualize:
       self.add_hooks(model,
                      architect)  # visualize activations and gradients at beginning of each epoch
     if self.training_loss.data is not None:
       loss = np.array(self.training_loss.data[-self.vis_interval:]).mean()
       self.smoothed_training_loss.add(nparray(loss))
-      self.smoothed_training_loss.commit()
 
   def eval_test_batch(self, title: str, model: SearchNetwork | NetworkCIFAR):
     self.logger.info("Eval test batch ...")
@@ -304,7 +312,6 @@ class Monitor:
     row = self.test_batch_vis.add_row()
     for col in range(cols):
       self.test_batch_vis.add_idx(probs[col], row, col, title)
-    self.test_batch_vis.commit()
     self.logger.debug(f"Append predictions of test batch: {title}")
 
   def add_validation_loss(self, loss: float, acc: float, topk_acc: float):
@@ -313,19 +320,15 @@ class Monitor:
     train_loss = np.array(self.training_loss.data[self.valid_train_ref_idx:]).mean()
     self.valid_train_ref_idx = len(self.training_loss.data)
     self.valid_loss.add(np.array([loss, train_loss])[:, np.newaxis], axis=1)
-    self.valid_loss.commit()
     self.logger.info(f"After {self.steps} batches of epoch {self.epoch}:")
     self.logger.info(f"\t- validation loss {loss:.2f}")
     self.valid_acc.add(np.array([acc]))
-    self.valid_acc.commit()
     self.logger.info(f"\t- validation accuracy {acc:.2f}")
     self.valid_topk_acc.add(np.array([topk_acc]))
-    self.valid_topk_acc.commit()
     self.logger.info(f"\t- validation topk accuracy {topk_acc:.2f}")
 
   def add_error_rate(self, error_rate: float):
     self.valid_err_rate.add(nparray(error_rate))
-    self.valid_err_rate.commit()
 
   def visualize_eigenvalues(self, input_valid: torch.Tensor, target_valid: torch.Tensor,
                             architect: Architect):
@@ -334,7 +337,6 @@ class Monitor:
     self.logger.info("Done calculating the Hessian Eigenvalues")
     dom_eigval = np.max(np.abs(eigvals))
     self.vis_eigvals.add(nparray(dom_eigval))
-    self.vis_eigvals.commit()
 
   def visualize_alphas(self, alpha_normal: np.ndarray, alpha_reduce: np.ndarray):
     self.logger.info("Visualize alphas ...")
@@ -345,9 +347,6 @@ class Monitor:
                                          f"Normal alphas at epoch {self.epoch}")
     self.vis_alphas_distribution.add_idx(alpha_reduce.flatten(), row, 1,
                                          f"Reduction alphas at epoch {self.epoch}")
-    self.vis_alphas_normal.commit()
-    self.vis_alphas_reduce.commit()
-    self.vis_alphas_distribution.commit()
 
   def visualize_genotypes(self, genotype: Genotype):
     self.logger.info("Visualize genotypes ...")
@@ -358,7 +357,6 @@ class Monitor:
     self.vis_genotypes.add_idx(
         self.vis_genotypes.plot.default.convert_genotype_to_array(genotype.reduce), row, 1,
         f"Reduction cell at {self.epoch}th epoch")
-    self.vis_genotypes.commit()
 
   def input_dependent_baseline(self, model: nn.Module, criterion: nn.Module):
     _, input, target = self.test_batch
