@@ -46,6 +46,8 @@ class Live(Generic[T]):
     """
     Create and save plot with current data.
     """
+    if self.data is None:
+      return
     fig = plt.figure()
     fig = self.plot.plot(self.data, fig)
     self.savefig(fig)
@@ -98,6 +100,8 @@ class LiveGrid(Live, Generic[T2]):
     return self.plot.rows - 1
 
   def commit(self):
+    if self.rows == 0 or self.cols == 0:
+      return
     if self.persist:
       with open(self.data_path_titles.as_posix(), "wb") as fstream:
         pickle.dump(self.plot.titles, fstream)
