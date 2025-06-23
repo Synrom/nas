@@ -10,7 +10,15 @@ class PastTrainRun:
 
 
 @dataclass
-class SearchConfig:
+class PPCPastTrainRun:
+  epoch: int
+  checkpoint: str
+  scheduler_checkpoint: str
+  stage: int
+
+
+@dataclass
+class DartsSearchConfig:
   momentum: float = 0.9
   weight_decay: float = 3e-4
   arch_learning_rate: float = 3e-4
@@ -85,3 +93,43 @@ class EvalConfig:
 def add_neglatible_bool_to_parser(parser: argparse.ArgumentParser, cmd: str, name: str):
   parser.add_argument(cmd, action="store_false", dest=name)
   parser.set_defaults(**{name: True})
+
+
+@dataclass
+class PPCSearchConfig:
+  stages: str
+  momentum: float = 0.9
+  weight_decay: float = 3e-4
+  arch_learning_rate: float = 3e-4
+  arch_weight_decay: float = 1e-3
+  unrolled: bool = False
+  batch_size: int = 128
+  learning_rate: float = 0.025
+  learning_rate_min: float = 0.001
+  report_freq: int = 50
+  epochs: int = 50
+  init_channels: int = 16
+  layers: int = 8
+  cutout: bool = False
+  cutout_length: int = 16
+  seed: int = 2
+  grad_clip: float = 5
+  train_portion: float = 0.5
+  runid: str = "train"
+  logdir: str = "log"
+  data_num_workers: int = 2
+  vis_activations_and_gradients: bool = True
+  debug: bool = False
+  vis_first_batch_inputs: bool = True
+  test_data_sharing_inbetween_batch: bool = True
+  overfit_single_batch: bool = True
+  input_dependent_baseline: bool = True
+  eval_test_batch: bool = True
+  vis_interval: int = 200
+  live_validate: bool = True
+  vis_alphas: bool = True
+  vis_genotypes: bool = True
+  vis_lrs: bool = True
+  vis_eigenvalues: bool = True
+  past_train: str | None = None
+  steps: int = 4

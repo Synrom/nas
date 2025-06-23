@@ -9,8 +9,12 @@ from torch.optim import Optimizer
 from typing import Iterable, Callable
 from numpy.linalg import eigvals
 
-from config import SearchConfig
-from models.darts.model_search import Network
+from config import PPCSearchConfig, DartsSearchConfig
+from models.darts.model_search import Network as DartsSearchNetwork
+from models.ppc.model_search import Network as PPCSearchNetwork
+
+Network = DartsSearchNetwork | PPCSearchNetwork
+SearchConfig = PPCSearchConfig | DartsSearchConfig
 
 
 def _concat(xs: Iterable[torch.Tensor] | torch.Tensor) -> torch.Tensor:

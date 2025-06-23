@@ -23,7 +23,10 @@ import io
 class Plot(ABC):
 
   @abstractmethod
-  def plot(self, data: np.ndarray, fig: Figure | None = None, axes: Axes | None = None) -> Figure:
+  def plot(self,
+           data: np.ndarray,
+           fig: Figure | None = None,
+           axes: Axes | None = None) -> tuple[Figure, Axes]:
     """
     Visualize data.
     """
@@ -52,7 +55,10 @@ class TwoLines(Plot):
     self.ylabel = ylabel
     self.num_steps_per_epoch = num_steps_per_epoch
 
-  def plot(self, data: np.ndarray, fig: Figure | None = None, axes: Axes | None = None) -> Figure:
+  def plot(self,
+           data: np.ndarray,
+           fig: Figure | None = None,
+           axes: Axes | None = None) -> tuple[Figure, Axes]:
     fig, axes = self.fig_and_axes(fig, axes)
     assert len(data.shape) > 1
     assert data.shape[0] == 2
@@ -76,7 +82,7 @@ class TwoLines(Plot):
         plt.text(step, plt.ylim()[1], f'Epoch {epoch}', rotation=90, va='top', ha='right', fontsize=8)
     if self.label1 or self.label2:
       fig.legend()
-    return fig
+    return fig, axes
 
 
 class Line(Plot):
@@ -91,7 +97,10 @@ class Line(Plot):
     self.xlabel = xlabel
     self.grid = grid
 
-  def plot(self, data: np.ndarray, fig: Figure | None = None, axes: Axes | None = None) -> Figure:
+  def plot(self,
+           data: np.ndarray,
+           fig: Figure | None = None,
+           axes: Axes | None = None) -> tuple[Figure, Axes]:
     fig, axes = self.fig_and_axes(fig, axes)
     axes.plot(np.arange(len(data)), data)
     if self.title:
@@ -101,7 +110,7 @@ class Line(Plot):
     if self.xlabel:
       axes.set_xlabel(self.xlabel)
     axes.grid(self.grid)
-    return fig
+    return fig, axes
 
 
 class LoadedPlotClass(Protocol):
@@ -116,7 +125,7 @@ LoadedPlot = Callable[[Figure | None, Axes | None], Figure] | LoadedPlotClass
 def plot_load_data(plot: Plot, data: np.ndarray) -> LoadedPlot:
 
   def visualize(fig: Figure | None = None, axes: Axes | None = None) -> Figure:
-    return plot.plot(data, fig, axes)
+    return plot.plot(data, fig, axes)[0]
 
   return visualize
 
@@ -142,13 +151,16 @@ class Image(Plot):
     self.vmax = vmax
     self.colormap = colormap
 
-  def plot(self, data: np.ndarray, fig: Figure | None = None, axes: Axes | None = None) -> Figure:
+  def plot(self,
+           data: np.ndarray,
+           fig: Figure | None = None,
+           axes: Axes | None = None) -> tuple[Figure, Axes]:
     fig, axes = self.fig_and_axes(fig, axes)
     img = axes.imshow(data, cmap=self.cmap, aspect=self.aspect, vmin=self.vmin, vmax=self.vmax)
     axes.axis("off")
     if self.colormap is not None:
       fig.colorbar(img, ax=axes, fraction=self.colormap.fraction, pad=self.colormap.fraction)
-    return fig
+    return fig, axes
 
 
 class Bar(Plot):
@@ -167,7 +179,10 @@ class Bar(Plot):
     self.rotation = rotation
     self.highlight_label = highlight_label
 
-  def plot(self, data: np.ndarray, fig: Figure | None = None, axes: Axes | None = None) -> Figure:
+  def plot(self,
+           data: np.ndarray,
+           fig: Figure | None = None,
+           axes: Axes | None = None) -> tuple[Figure, Axes]:
     fig, axes = self.fig_and_axes(fig, axes)
     if self.labels is not None:
       assert len(data) == len(self.labels)
@@ -186,7 +201,7 @@ class Bar(Plot):
         tick.set_horizontalalignment("right")
         if self.highlight_label is not None and tick.get_text() == self.highlight_label:
           tick.set_color('red')
-    return fig
+    return fig, axes
 
 
 T = TypeVar('T', bound=Plot)
@@ -220,11 +235,11 @@ class Grid(Generic[T]):
     for row in range(self.rows):
       for col in range(self.cols):
         if (row, col) in self.manual:
-          fig = self.manual[(row, col)](fig, axes[row, col])
+          self.manual[(row, col)](fig, axes[row, col])
         elif col in self.col_plots:
-          fig = self.col_plots[col].plot(data[row, col], fig, axes[row, col])
+          self.col_plots[col].plot(data[row, col], fig, axes[row, col])
         else:
-          fig = self.default.plot(data[row, col], fig, axes[row, col])
+          self.default.plot(data[row, col], fig, axes[row, col])
         if (row, col) in self.titles:
           axes[row, col].set_title(self.titles[(row, col)])
     fig.tight_layout()
@@ -236,10 +251,13 @@ class Hist(Plot):
   def __init__(self, bins: int):
     self.bins = bins
 
-  def plot(self, data: np.ndarray, fig: Figure | None = None, axes: Axes | None = None) -> Figure:
+  def plot(self,
+           data: np.ndarray,
+           fig: Figure | None = None,
+           axes: Axes | None = None) -> tuple[Figure, Axes]:
     fig, axes = self.fig_and_axes(fig, axes)
     axes.hist(data, bins=50)
-    return fig
+    return fig, axes
 
 
 class VisAlpha(Plot):
@@ -304,7 +322,10 @@ class VisAlpha(Plot):
     ax.set_title(f"Node {step}", fontsize=20)
     ax.axis("off")
 
-  def plot(self, data: np.ndarray, fig: Figure | None = None, axes: Axes | None = None) -> Figure:
+  def plot(self,
+           data: np.ndarray,
+           fig: Figure | None = None,
+           axes: Axes | None = None) -> tuple[Figure, Axes]:
     # Create one subplot per step
     row_start = ((data.shape[0] - 1) // 5) * 5
     row_end = data.shape[0]
@@ -331,7 +352,7 @@ class VisAlpha(Plot):
     ]
     fig.legend(handles=handles, loc='upper center', ncol=self.num_ops, bbox_to_anchor=(0.5, 1.05))
 
-    return fig
+    return fig, ax[0, 0]
 
 
 class GenotypeGraph(Plot):
@@ -385,13 +406,19 @@ class GenotypeGraph(Plot):
       g.edge(str(i), "c_{k}", fillcolor="gray")
     return g
 
-  def plot(self, data: np.ndarray, fig: Figure | None = None, axes: Axes | None = None) -> Figure:
-    if fig is None or axes is None:
-      fig, axes = plt.subplots(1, 2, figsize=(6, 4))
+  def plot(self,
+           data: np.ndarray,
+           fig: Figure | None = None,
+           axes: Axes | None = None) -> tuple[Figure, Axes]:
+    if fig is None:
+      fig = plt.figure(figsize=(6, 4))
+    if axes is None:
+      axes = fig.add_subplot(1, 1, 1)
+
     genotype = self.convert_array_to_genotype(data)
     g = self.graph(genotype)
     img_bytes = g.pipe(format='png')
     image = PILImage.open(io.BytesIO(img_bytes))
     axes.imshow(image)  # type: ignore
     axes.axis('off')  # type: ignore
-    return fig
+    return fig, axes

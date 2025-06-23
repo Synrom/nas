@@ -17,21 +17,26 @@ import random
 
 from dataset.cifar import cifar_label2name
 from utils import clone_optimizer, clone_model
-from models.darts.model_search import Network as SearchNetwork
-from models.darts.model import NetworkCIFAR
+from models.darts.model_search import Network as DartsSearchNetwork
+from models.darts.model import NetworkCIFAR as DartsEvalNetwork
+from models.ppc.model_search import Network as PPCSearchNetwork
 from models.darts.architect import Architect
-from config import SearchConfig
+from config import DartsSearchConfig, PPCSearchConfig
 from monitor.live import Live, LiveGrid, nparray
 from monitor.plot import Line, Grid, Bar, Image, plot_load_data, Hist, TwoLines, ColorMapOptions, VisAlpha, GenotypeGraph
 from models.darts.genotypes import PRIMITIVES, Genotype
 from models.darts.architect import Architect, Hook
+
+SearchNetwork = DartsSearchNetwork | PPCSearchNetwork
+EvalNetwork = DartsEvalNetwork
+SearchConfig = DartsSearchConfig | PPCSearchConfig
 
 
 class Monitor:
 
   def __init__(
       self,
-      model: SearchNetwork | NetworkCIFAR,
+      model: SearchNetwork | EvalNetwork,
       test_dataset: torch.utils.data.Dataset,
       device: torch.device,
       criterion: nn.Module,
@@ -47,6 +52,7 @@ class Monitor:
       primitives: list[str] = PRIMITIVES,
       debug: bool = True,
       architect: Architect | None = None,
+      stage: int = 0,
   ):
     self.vis_interval = vis_interval
     self.num_steps_per_epoch = num_steps_per_epoch
@@ -121,6 +127,7 @@ class Monitor:
     self.hessian_hook: Hook | None = None
     self.vis_eigvals = Live(self.path / "eigenvalues.png",
                             Line(title="Hessian Eigenvalues", ylabel="Dominant Eigenvalue"))
+    self.stage = stage
     if self.vis_acts_and_grads:
       self.add_hooks(model, architect)
 
@@ -139,7 +146,34 @@ class Monitor:
     self.vis_lrs.commit()
     self.vis_eigvals.commit()
 
-  def add_hooks(self, model: SearchNetwork | NetworkCIFAR, architect: None | Architect = None):
+  def reset_hook(self, model: SearchNetwork | EvalNetwork, architect: None | Architect = None):
+    self.hook_vis = None
+    for hook in self.forward_checks.values():
+      hook.remove()
+    for hook in self.backward_checks.values():
+      hook.remove()
+    for hook in self.forward_hooks.values():
+      hook.remove()
+    for hook in self.backward_hooks.values():
+      hook.remove()
+    self.forward_checks = {}
+    self.backward_checks = {}
+    self.forward_hooks = {}
+    self.backward_hooks = {}
+    self.add_hooks(model, architect)
+
+  def next_stage(self):
+    self.stage += 1
+    title = f"Stage {self.stage}"
+    self.training_loss.add_marker(title)
+    self.valid_loss.add_marker(title)
+    self.smoothed_training_loss.add_marker(title)
+    self.valid_acc.add_marker(title)
+    self.valid_err_rate.add_marker(title)
+    self.valid_topk_acc.add_marker(title)
+    self.vis_lrs.add_marker(title)
+
+  def add_hooks(self, model: SearchNetwork | EvalNetwork, architect: None | Architect = None):
     if self.hook_vis:
       self.logger.info("Logging activation inputs and gradients")
       self.hook_vis.commit()
@@ -186,7 +220,8 @@ class Monitor:
       self.register_hessian_hook(rows, 1, architect)
     rows += 1
     self.hook_vis = LiveGrid(self.path / f"epoch-{self.epoch-1}-activations-and-gradients.png",
-                             Grid(Hist(50), rows, 2), persist=False)
+                             Grid(Hist(50), rows, 2),
+                             persist=False)
 
   def register_alpha_hook(self, row: int, col: int, architect: Architect):
 
@@ -272,7 +307,7 @@ class Monitor:
     self.training_loss.add(nparray(loss))
 
   def end_epoch(self,
-                model: SearchNetwork | NetworkCIFAR,
+                model: SearchNetwork | EvalNetwork,
                 architect: Architect | None = None,
                 visualize: bool = True):
     self.epoch += 1
@@ -284,7 +319,7 @@ class Monitor:
       loss = np.array(self.training_loss.data[-self.vis_interval:]).mean()
       self.smoothed_training_loss.add(nparray(loss))
 
-  def eval_test_batch(self, title: str, model: SearchNetwork | NetworkCIFAR):
+  def eval_test_batch(self, title: str, model: SearchNetwork | EvalNetwork):
     self.logger.info("Eval test batch ...")
     imgs, input, target = self.test_batch
     input, target = input.to(self.device), target.to(self.device)
@@ -451,7 +486,7 @@ class Monitor:
 
   def overfit_single_batch_eval(
       self,
-      model: NetworkCIFAR,
+      model: EvalNetwork,
       input: torch.Tensor,
       target: torch.Tensor,
       criterion: nn.Module,

@@ -18,13 +18,15 @@ from dataset.cifar import cifar10_means, cifar10_stds
 from dataset.wrapper import cifar10
 from monitor.monitor import Monitor
 from utils import clone_model, models_eq
-from config import DartsSearchConfig, PastTrainRun, add_neglatible_bool_to_parser
-from models.darts.model_search import Network
+from config import PPCSearchConfig, PPCPastTrainRun, add_neglatible_bool_to_parser
+from models.ppc.model_search import Network
+from models.ppc.config import read_stage_config
+from models.ppc.switch import init_switch_all_true
 from models.darts.architect import Architect
-from models.darts.genotypes import save_genotype
+from models.darts.genotypes import save_genotype, PRIMITIVES
 
 
-def parse_args() -> DartsSearchConfig:
+def parse_args() -> PPCSearchConfig:
   parser = argparse.ArgumentParser("cifar")
   parser.add_argument("--batch_size", type=int, default=64, help="batch size")
   parser.add_argument("--learning_rate", type=float, default=0.025, help="init learning rate")
@@ -33,12 +35,12 @@ def parse_args() -> DartsSearchConfig:
   parser.add_argument("--weight_decay", type=float, default=3e-4, help="weight decay")
   parser.add_argument("--report_freq", type=float, default=50, help="report frequency")
   parser.add_argument("--epochs", type=int, default=50, help="num of training epochs")
+  parser.add_argument("--steps", type=int, default=4, help="Number of nodes per cell")
   parser.add_argument("--init_channels", type=int, default=16, help="num of init channels")
   parser.add_argument("--layers", type=int, default=8, help="total number of layers")
-  parser.add_argument("--model_path", type=str, default="saved_models", help="path to save the model")
+  parser.add_argument('--stages', type=str, help='Path to stage configuration')
   parser.add_argument("--cutout", action="store_true", default=False, help="use cutout")
   parser.add_argument("--cutout_length", type=int, default=16, help="cutout length")
-  parser.add_argument("--drop_path_prob", type=float, default=0.3, help="drop path probability")
   parser.add_argument("--runid", type=str, default="train", help="Run ID of this training run")
   parser.add_argument("--logdir", type=str, default="log", help="Directory to write logs to")
   parser.add_argument("--seed", type=int, default=2, help="random seed")
@@ -76,11 +78,11 @@ def parse_args() -> DartsSearchConfig:
                       default=200,
                       help="Interval to visualize training loss")
   args = parser.parse_args()
-  return DartsSearchConfig(**vars(args))
+  return PPCSearchConfig(**vars(args))
 
 
-def validate_model(model: Network, criterion: nn.Module, monitor: Monitor, valid_queue: DataLoader,
-                   config: DartsSearchConfig) -> tuple[float, float, float]:
+def validate_model(model: Network, criterion: nn.Module, monitor: Monitor,
+                   valid_queue: DataLoader) -> tuple[float, float, float]:
   """
   Run model on valid_queue and report results to monitor.
   """
@@ -117,8 +119,14 @@ def validate_model(model: Network, criterion: nn.Module, monitor: Monitor, valid
   return mean_loss, mean_acc, mean_topk_acc
 
 
-def train(model: Network, criterion: nn.Module, monitor: Monitor, architect: Architect, lr: float,
-          epoch: int, optimizer: Optimizer):
+def train(model: Network,
+          criterion: nn.Module,
+          monitor: Monitor,
+          architect: Architect,
+          lr: float,
+          epoch: int,
+          optimizer: Optimizer,
+          train_alphas: bool = True):
   monitor.logger.info(f"Train {epoch} epoch")
   for idx, (imgs, input_train, target_train) in enumerate(train_queue):
     model.train()
@@ -128,13 +136,14 @@ def train(model: Network, criterion: nn.Module, monitor: Monitor, architect: Arc
     imgs_search, input_search, target_search = next(iter(valid_queue))
     input_search, target_search = input_search.to(model.device), target_search.to(model.device)
 
-    architect.step(input_train,
-                   target_train,
-                   input_search,
-                   target_search,
-                   lr,
-                   optimizer,
-                   unrolled=config.unrolled)
+    if train_alphas is True:
+      architect.step(input_train,
+                     target_train,
+                     input_search,
+                     target_search,
+                     lr,
+                     optimizer,
+                     unrolled=config.unrolled)
 
     optimizer.zero_grad()
 
@@ -174,6 +183,8 @@ def train(model: Network, criterion: nn.Module, monitor: Monitor, architect: Arc
 
 
 if __name__ == '__main__':
+
+  start_time = time.time()
 
   config = parse_args()
 
@@ -237,13 +248,17 @@ if __name__ == '__main__':
       num_workers=config.data_num_workers,
   )
 
+  stages = read_stage_config(Path(config.stages))
   criterion = nn.CrossEntropyLoss()
+  reduction_ratio = 2
 
   if config.past_train is not None:
     with open(config.past_train) as fstream:
       print("Loading checkpoint ...")
-      past = PastTrainRun(**json.load(fstream))
+      past = PPCPastTrainRun(**json.load(fstream))
       start_epoch = past.epoch + 1
+      start_stage = past.stage
+      stage = stages[start_stage]
       print(f"Beginning with epoch {start_epoch}")
       model = Network.load_from_file(Path(past.checkpoint))
       optimizer = torch.optim.SGD(model.parameters(),
@@ -253,7 +268,6 @@ if __name__ == '__main__':
       scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,
                                                              config.epochs,
                                                              eta_min=config.learning_rate_min)
-
       alpha_optimizer = torch.optim.Adam(model.arch_parameters(),
                                          lr=config.arch_learning_rate,
                                          betas=(0.5, 0.999),
@@ -264,7 +278,23 @@ if __name__ == '__main__':
       alpha_optimizer.load_state_dict(scheduler_states["alpha_optimizer_state"])
   else:
     start_epoch = 0
-    model = Network(config.init_channels, 10, config.layers, criterion, device)
+    start_stage = 0
+    stage = stages[start_stage]
+    switch_normal = init_switch_all_true(config.steps, len(PRIMITIVES))
+    switch_reduce = init_switch_all_true(config.steps, len(PRIMITIVES))
+    model = Network(C=stage.channels,
+                    num_classes=10,
+                    layers=stage.cells,
+                    criterion=criterion,
+                    device=device,
+                    switch_normal=switch_normal,
+                    switch_reduce=switch_reduce,
+                    steps=config.steps,
+                    reduction_ratio=reduction_ratio,
+                    num_ops=stage.operations,
+                    channel_sampling_prob=stage.channel_sampling_prob,
+                    dropout_rate=stage.dropout,
+                    multiplier=3)
     optimizer = torch.optim.SGD(model.parameters(),
                                 config.learning_rate,
                                 momentum=config.momentum,
@@ -272,7 +302,6 @@ if __name__ == '__main__':
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,
                                                            config.epochs,
                                                            eta_min=config.learning_rate_min)
-
     alpha_optimizer = torch.optim.Adam(model.arch_parameters(),
                                        lr=config.arch_learning_rate,
                                        betas=(0.5, 0.999),
@@ -295,59 +324,86 @@ if __name__ == '__main__':
                     vis_acts_and_grads=config.vis_activations_and_gradients,
                     num_steps_per_epoch=len(train_queue))
 
-  for epoch in range(start_epoch, config.epochs):
-    print(f"Epoch is {epoch}")
-    lr = scheduler.get_lr()[0]
+  for stage_idx in range(start_stage, len(stages)):
+    stage = stages[stage_idx]
+    for epoch in range(start_epoch, stage.epochs + 10):
+      print(f"Epoch is {epoch}")
+      lr = scheduler.get_lr()[0]
 
-    # train single batch
-    train(model, criterion, monitor, architect, lr, epoch, optimizer)
+      # train single batch
+      train(model, criterion, monitor, architect, lr, epoch, optimizer, train_alphas=epoch >= 10)
 
-    # visualize everything
-    model.eval()
-    if config.input_dependent_baseline is True:
-      monitor.input_dependent_baseline(model, criterion)
-    if config.eval_test_batch is True:
-      monitor.eval_test_batch(f"After {epoch} epochs", model)
-    if config.live_validate is True:
-      validate_model(model, criterion, monitor, valid_queue, config)
-    if config.vis_alphas is True:
-      monitor.visualize_alphas(
-          F.softmax(model.alphas_normal, dim=1).detach().cpu().numpy(),
-          F.softmax(model.alphas_reduce, dim=1).detach().cpu().numpy())
-    if config.vis_genotypes is True:
-      monitor.visualize_genotypes(model.genotype())
-    if config.vis_lrs:
-      monitor.visualize_lrs(lr)
+      # visualize everything
+      model.eval()
+      if config.input_dependent_baseline is True:
+        monitor.input_dependent_baseline(model, criterion)
+      if config.eval_test_batch is True:
+        monitor.eval_test_batch(f"After {epoch} epochs", model)
+      if config.live_validate is True:
+        validate_model(model, criterion, monitor, valid_queue)
+      if config.vis_alphas is True:
+        monitor.visualize_alphas(
+            F.softmax(model.alphas_normal, dim=1).detach().cpu().numpy(),
+            F.softmax(model.alphas_reduce, dim=1).detach().cpu().numpy())
+      if config.vis_genotypes is True:
+        monitor.visualize_genotypes(model.genotype())
+      if config.vis_lrs:
+        monitor.visualize_lrs(lr)
 
-    scheduler.step()
+      scheduler.step()
 
-    # save model
-    model_checkpoint_path = f"{config.logdir}/{config.runid}/checkpoint-{epoch}-epochs.pkl"
-    model.save_to_file(Path(model_checkpoint_path))
-    optimizer_checkpoint_path = f"{config.logdir}/{config.runid}/optimizer.pkl"
-    train_checkpoint_path = f"{config.logdir}/{config.runid}/last_run.json"
-    monitor.logger.info(f"Save training to {train_checkpoint_path}")
-    osd = optimizer.state_dict()
-    ssd = scheduler.state_dict()
-    asd = alpha_optimizer.state_dict()
-    checkpoint = {"optimizer_state": osd, "scheduler_state": ssd, "alpha_optimizer_state": asd}
-    torch.save(checkpoint, optimizer_checkpoint_path)
-    train_checkpoint = PastTrainRun(epoch=epoch,
-                                    checkpoint=model_checkpoint_path,
-                                    scheduler_checkpoint=optimizer_checkpoint_path)
-    print(f"Saving {asdict(train_checkpoint)} to {train_checkpoint_path}")
-    with open(train_checkpoint_path, "w") as fstream:
-      json.dump(asdict(train_checkpoint), fstream)
+      current_time = time.time()
+      stop = False
+      if current_time - start_time >= 60 * 45:  # stop after 45 mins
+        monitor.logger.info("Restart after half an hour")
+        stop = True
 
-    monitor.training_loss.add_marker(f"Epoch {epoch}")
-    monitor.smoothed_training_loss.add_marker(f"Epoch {epoch}")
-    monitor.end_epoch(model, architect)
-    monitor.commit()
+      # save model
+      if stop or epoch % config.vis_interval == 0 or epoch == stage.epochs + 9:
+        model_checkpoint_path = f"{config.logdir}/{config.runid}/checkpoint-{epoch}-epochs.pkl"
+        model.save_to_file(Path(model_checkpoint_path))
+        optimizer_checkpoint_path = f"{config.logdir}/{config.runid}/optimizer.pkl"
+        train_checkpoint_path = f"{config.logdir}/{config.runid}/last_run.json"
+        monitor.logger.info(f"Save training to {train_checkpoint_path}")
+        osd = optimizer.state_dict()
+        ssd = scheduler.state_dict()
+        asd = alpha_optimizer.state_dict()
+        checkpoint = {"optimizer_state": osd, "scheduler_state": ssd, "alpha_optimizer_state": asd}
+        torch.save(checkpoint, optimizer_checkpoint_path)
+        train_checkpoint = PPCPastTrainRun(epoch=epoch,
+                                           checkpoint=model_checkpoint_path,
+                                           scheduler_checkpoint=optimizer_checkpoint_path,
+                                           stage=stage_idx)
+        print(f"Saving {asdict(train_checkpoint)} to {train_checkpoint_path}")
+        with open(train_checkpoint_path, "w") as fstream:
+          json.dump(asdict(train_checkpoint), fstream)
 
-    # save genotype
-    if epoch == config.epochs - 1:
-      genotype_path = monitor.path / f"{config.runid}_genotype.json"
-      save_genotype(genotype_path, model.genotype())
-      monitor.logger.info(f"Saved resulting genotype to {genotype_path.as_posix()}.")
+      monitor.end_epoch(model, architect)
+      monitor.commit()
 
-    break  # one epoch per SLURM run
+      # save genotype
+      if epoch == config.epochs - 1:
+        genotype_path = monitor.path / f"{config.runid}_genotype.json"
+        save_genotype(genotype_path, model.genotype())
+        monitor.logger.info(f"Saved resulting genotype to {genotype_path.as_posix()}.")
+
+      if stop:
+        exit()
+
+      break  # TODO: delete
+
+    if stage_idx + 1 < len(stages):
+      stage = stages[stage_idx + 1]
+      model = model.transfer_to_stage(stage, stage_idx == len(stages) - 1)
+      optimizer = torch.optim.SGD(model.parameters(),
+                                  config.learning_rate,
+                                  momentum=config.momentum,
+                                  weight_decay=config.weight_decay)
+      scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,
+                                                             config.epochs,
+                                                             eta_min=config.learning_rate_min)
+      alpha_optimizer = torch.optim.Adam(model.arch_parameters(),
+                                         lr=config.arch_learning_rate,
+                                         betas=(0.5, 0.999),
+                                         weight_decay=config.arch_weight_decay)
+      monitor.reset_hook(model, architect)

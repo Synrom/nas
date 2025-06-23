@@ -140,12 +140,14 @@ DARTS = DARTS_V2
 
 def save_genotype(path: Path, genotype: Genotype):
   with open(path.as_posix(), "w") as fstream:
-    json.dump(genotype, fstream)
+    json.dump(genotype, fstream, indent=2)
 
 
 def load_genotype(path: Path) -> Genotype:
   with open(path.as_posix(), "r") as fstream:
     genotype = json.load(fstream)
+    genotype[0] = [(i[0], i[1]) for i in genotype[0]]
+    genotype[2] = [(i[0], i[1]) for i in genotype[2]]
   return Genotype(normal=genotype[0],
                   normal_concat=genotype[1],
                   reduce=genotype[2],

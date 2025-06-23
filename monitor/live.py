@@ -25,6 +25,12 @@ class Live(Generic[T]):
                init_data: np.ndarray | None = None,
                data_path: Path | None = None):
     self.data_path = data_path if data_path is not None else path.with_name(f"{path.name}.npy")
+    self.marker_path = path.with_name(f"{path.name}_markers.json")
+    if self.marker_path.exists():
+      with open(self.marker_path.as_posix(), "r") as fstream:
+        self.markers: list[tuple[int, str]] = json.load(fstream)
+    else:
+      self.markers = []
     if data_path is not None:
       print(f"datapath is {self.data_path}")
     if self.data_path.exists() and init_data is None:
@@ -33,6 +39,10 @@ class Live(Generic[T]):
       self.data = init_data
     self.path = path
     self.plot = plot
+
+  def add_marker(self, title: str):
+    idx = self.data.shape[-1]
+    self.markers.append((idx, title))
 
   def savefig(self, fig: plt.Figure):
     """
@@ -47,10 +57,16 @@ class Live(Generic[T]):
     Create and save plot with current data.
     """
     fig = plt.figure()
-    fig = self.plot.plot(self.data, fig)
+    fig, axes = self.plot.plot(self.data, fig)
+    for step, title in self.markers:
+      axes.axvline(x=step, color='gray', linestyle='--', alpha=0.5)
+      ylim = axes.get_ylim()
+      axes.text(step, ylim[1], title, rotation=90, va='top', ha='right', fontsize=8)
     self.savefig(fig)
     plt.close(fig)
     np.save(self.data_path, self.data)
+    with open(self.marker_path.as_posix(), "w") as fstream:
+      json.dump(self.markers, fstream)
 
   def add(self, item: np.ndarray, axis: int = 0):
     if self.data is None:

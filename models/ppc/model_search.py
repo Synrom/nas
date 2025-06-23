@@ -5,19 +5,20 @@ import torch.nn.functional as F
 from numpy import ndarray
 from torch.autograd import Variable
 from pathlib import Path
-from torch import jit
+import copy
 
 from models.darts.operations import *
 from models.darts.genotypes import PRIMITIVES
 from models.darts.genotypes import Genotype
-from models.ppc.op import PartialMixedOp, Attention
-from models.ppc.switch import Switch
+from models.ppc.op import PartialMixedOp, SEBlock
+from models.ppc.config import StageConfig
+from models.ppc.switch import Switch, init_switch_all_false
 
 
 class Cell(nn.Module):
 
   def __init__(self, steps: int, multiplier: int, C_prev_prev: int, C_prev: int, C: int,
-               reduction: bool, reduction_prev: bool, switch: Switch, partial_connection_prob: float,
+               reduction: bool, reduction_prev: bool, switch: Switch, channel_sampling_prob: float,
                reduction_ratio: int):
     """
         Args:
@@ -53,9 +54,9 @@ class Cell(nn.Module):
         stride = 2 if reduction and j < 2 else 1
 
         # for each input node, add an edge
-        op = PartialMixedOp(C, stride, partial_connection_prob, switch[i + 2][j])
+        op = PartialMixedOp(C, stride, channel_sampling_prob, switch[i + 2][j])
         self._ops.append(op)
-      self._attns.append(Attention(C, reduction_ratio))
+      self._attns.append(SEBlock(C, reduction_ratio))
 
   def forward(self, s0: torch.Tensor, s1: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
     """
@@ -97,9 +98,12 @@ class Network(nn.Module):
       layers: int,
       criterion: nn.Module,
       device: torch.device,
-      switch: Switch,
+      switch_normal: Switch,
+      switch_reduce: Switch,
       reduction_ratio: int,
-      partial_connection_prob: float,
+      channel_sampling_prob: float,
+      dropout_rate: float,
+      num_ops: int,
       steps: int = 4,
       multiplier: int = 4,
       stem_multiplier: int = 3,
@@ -121,9 +125,12 @@ class Network(nn.Module):
     self._criterion = criterion
     self._steps = steps
     self._multiplier = multiplier
-    self._switch = switch
     self._reduction_ratio = reduction_ratio
-    self._partial_connection_prob = partial_connection_prob
+    self._partial_connection_prob = channel_sampling_prob
+    self._num_ops = num_ops
+    self._switch_normal = switch_normal
+    self._switch_reduce = switch_reduce
+    self._dropout_rate = dropout_rate
     self.device = device
 
     C_curr = stem_multiplier * C
@@ -136,15 +143,18 @@ class Network(nn.Module):
       if i in [layers // 3, 2 * layers // 3]:
         C_curr *= 2
         reduction = True
+        cell = Cell(steps, multiplier, C_prev_prev, C_prev, C_curr, reduction, reduction_prev,
+                    switch_reduce, channel_sampling_prob, reduction_ratio)
       else:
         reduction = False
-      cell = Cell(steps, multiplier, C_prev_prev, C_prev, C_curr, reduction, reduction_prev, switch,
-                  partial_connection_prob, reduction_ratio)
+        cell = Cell(steps, multiplier, C_prev_prev, C_prev, C_curr, reduction, reduction_prev,
+                    switch_normal, channel_sampling_prob, reduction_ratio)
       reduction_prev = reduction
       self.cells += [cell]
       C_prev_prev, C_prev = C_prev, multiplier * C_curr
 
     self.global_pooling = nn.AdaptiveAvgPool2d(1)
+    self.dropout = nn.Dropout(p=dropout_rate)
     self.classifier = nn.Linear(C_prev, num_classes)
 
     self._initialize_alphas()
@@ -154,8 +164,9 @@ class Network(nn.Module):
         Inits a new Network with the same structure and alphas as self, but new modules.
         """
     model_new = Network(self._C, self._num_classes, self._layers, self._criterion, self.device,
-                        self._switch, self._reduction_ratio,
-                        self._partial_connection_prob).to(self.device)
+                        self._switch_normal, self._switch_reduce, self._reduction_ratio,
+                        self._partial_connection_prob, self._dropout_rate,
+                        self._num_ops).to(self.device)
     for x, y in zip(model_new.arch_parameters(), self.arch_parameters()):
       x.data.copy_(y.data)
     return model_new
@@ -186,7 +197,9 @@ class Network(nn.Module):
 
     # classifier
     out = self.global_pooling(s1)
-    logits = self.classifier(out.view(out.size(0), -1))
+    out = out.view(out.size(0), -1)
+    out = self.dropout(out)
+    logits = self.classifier(out)
     return logits
 
   def _loss(self, input, target):
@@ -200,7 +213,7 @@ class Network(nn.Module):
 
     # for each node in cell, count all input edges
     k = sum(1 for i in range(self._steps) for n in range(2 + i))
-    num_ops = len(PRIMITIVES)
+    num_ops = self._num_ops
 
     # for each edge, get num_ops weights from Norm[0,1]
     self.alphas_normal = Variable(1e-3 * torch.randn(k, num_ops).to(self.device), requires_grad=True)
@@ -209,6 +222,45 @@ class Network(nn.Module):
         self.alphas_normal,
         self.alphas_reduce,
     ]
+
+  def transfer_to_stage(self, stage: StageConfig, drop_zeroes: bool) -> Network:
+    switch_normal, switch_reduce = self.generate_switch(stage.operations, drop_zeroes)
+    model = Network(C=stage.channels,
+                    num_classes=self._num_classes,
+                    layers=stage.cells,
+                    criterion=self._criterion,
+                    device=self.device,
+                    switch_normal=switch_normal,
+                    switch_reduce=switch_reduce,
+                    steps=self._steps,
+                    reduction_ratio=self._reduction_ratio,
+                    num_ops=stage.operations,
+                    channel_sampling_prob=stage.channel_sampling_prob,
+                    dropout_rate=stage.dropout)
+    model.to(self.device)
+
+    def pairs(old: list[bool], new: list[bool]) -> list[tuple[int, int]]:
+      assert len([l for l in new if l is True]) == self._num_ops
+      p: list[tuple[int, int]] = []
+      o_count = 0
+      for o, n in zip(old, new):
+        if n is True:
+          assert o == n
+          p.append((len(p), o_count))
+        if o is True:
+          o_count += 1
+      return p
+
+    offset = 0
+    for i in range(self._steps):
+      for j in range(2 + i):  # iterate over all previous nodes i plus two input nodes
+        for new_op_idx, old_op_idx in pairs(switch_normal[i][j], self._switch_normal[i][j]):
+          model.alphas_normal[offset, new_op_idx] = self.alphas_normal[offset, old_op_idx]
+        for new_op_idx, old_op_idx in pairs(switch_reduce[i][j], self._switch_reduce[i][j]):
+          model.alphas_reduce[offset, new_op_idx] = self.alphas_reduce[offset, old_op_idx]
+      offset += 1
+
+    return model
 
   def arch_parameters(self) -> list[Variable]:
     return self._arch_parameters
@@ -280,3 +332,26 @@ class Network(nn.Module):
     Reads model as pickle from path.
     """
     return torch.load(path, weights_only=False)
+
+  def generate_switch(self, num_ops: int, drop_zeroes: bool) -> tuple[Switch, Switch]:
+    """
+    Given a number of operations per edge, return switch that only allows k-top operations
+    """
+    # switch is a list of list of bools
+    switch_normal = init_switch_all_false(self._steps, len(PRIMITIVES))
+    switch_reduce = init_switch_all_false(self._steps, len(PRIMITIVES))
+    idx = 0
+    for i in range(2, self._steps + 2):
+      for j in range(i):
+        assert len(self.alphas_normal[idx]) == len(switch_normal[i][j])
+        assert len(self.alphas_normal[idx]) == len(switch_reduce[i][j])
+        _, topk_idxs_normal = self.alphas_normal[idx].abs().topk(num_ops)
+        _, topk_idxs_reduce = self.alphas_reduce[idx].abs().topk(num_ops)
+        for topk_i in topk_idxs_normal:
+          if drop_zeroes is False or PRIMITIVES[topk_i] != "none":
+            switch_normal[i][j][topk_i] = True
+        for topk_i in topk_idxs_reduce:
+          if drop_zeroes is False or PRIMITIVES[topk_i] != "none":
+            switch_reduce[i][j][topk_i] = True
+        idx += 1
+    return switch_normal, switch_reduce

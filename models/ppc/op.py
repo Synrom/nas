@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 from models.darts.genotypes import PRIMITIVES
-from models.darts.operations import OPS
+from models.darts.operations import OPS, ReLUConvBN
 
 
 class PartialMixedOp(nn.Module):
@@ -14,6 +14,9 @@ class PartialMixedOp(nn.Module):
     super(PartialMixedOp, self).__init__()
     self._ops = nn.ModuleList()
     self.C_sampled = int(prob * C)
+    self._stride = stride
+    if self._stride > 1:
+      self.pool = nn.MaxPool2d(2, self._stride)
     self.C = C
     for primitive, activated in zip(PRIMITIVES, edge_switch):
       if activated is False:
@@ -30,27 +33,28 @@ class PartialMixedOp(nn.Module):
         x: edge input
         weights: the alphas of the operations
     """
-    # x in (B, C, W, H)
+    if self._stride > 1:  # reduction cell
+      rest = self.pool(x)
+    else:
+      rest = x
+
     indices = torch.randperm(self.C)
-    sampled_indices = indices[:self.C_sampled]
-    unsampled_indices = indices[self.C_sampled:]
+    sampled_indices = indices[:self.C_sampled].sort()[0]
     sampled_x = x[:, sampled_indices, :, :]
 
     sampled_result = sum(w * op(sampled_x) for w, op in zip(weights, self._ops))
-    result = torch.zeros_like(x)
-    result[:, sampled_indices, :, :] = sampled_result
-    result[:, unsampled_indices, :, :] = x[:, unsampled_indices, :, :]
+    rest[:, sampled_indices, :, :] = sampled_result
 
-    return result
+    return rest
 
 
-class Attention(nn.Module):
+class SEBlock(nn.Module):
   """
   The Attention module used in PPC paper.
   """
 
   def __init__(self, C: int, reduction_ratio: int):
-    super(Attention, self).__init__()
+    super(SEBlock, self).__init__()
 
     reduced_C = max(1, C // reduction_ratio)
 
@@ -65,8 +69,8 @@ class Attention(nn.Module):
 
   def forward(self, x: torch.Tensor) -> torch.Tensor:
     B, C, _, _ = x.shape
-    attn = self.avg_pool(x).view(B, C)
+    attn: torch.Tensor = self.avg_pool(x).view(B, C)
     attn = self.a1(self.w1(attn))
     attn = self.a2(self.w2(attn))
     attn = self.a3(self.w3(attn))
-    return x * attn
+    return x * attn.unsqueeze(-1).unsqueeze(-1)

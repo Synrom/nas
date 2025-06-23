@@ -22,7 +22,7 @@ from utils import clone_model, models_eq
 
 def parse_args() -> EvalConfig:
   parser = argparse.ArgumentParser("cifar")
-  parser.add_argument('--batch_size', type=int, default=96, help='batch size')
+  parser.add_argument('--batch_size', type=int, default=96, help='batch size')  # 128 for PPC
   parser.add_argument('--learning_rate', type=float, default=0.025, help='init learning rate')
   parser.add_argument('--momentum', type=float, default=0.9, help='momentum')
   parser.add_argument('--weight_decay', type=float, default=3e-4, help='weight decay')
@@ -247,6 +247,9 @@ if __name__ == "__main__":
       monitor.input_dependent_baseline(model, criterion)
     if config.vis_lrs:
       monitor.visualize_lrs(scheduler.get_lr()[0])
+    if visualize:
+      monitor.smoothed_training_loss.add_marker(f"Epoch {epoch}")
+      monitor.training_loss.add_marker(f"Epoch {epoch}")
 
     scheduler.step()
 
