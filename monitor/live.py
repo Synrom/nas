@@ -41,7 +41,7 @@ class Live(Generic[T]):
     self.plot = plot
 
   def add_marker(self, title: str):
-    idx = self.data.shape[-1]
+    idx = self.data.shape[-1] - 1
     self.markers.append((idx, title))
 
   def savefig(self, fig: plt.Figure):
