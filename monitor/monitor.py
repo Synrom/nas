@@ -110,7 +110,8 @@ class Monitor:
                                                               Grid(Hist(50), rows=0, cols=2))
       self.normal_alphas_log = model.alphas_normal.detach().cpu().numpy()[np.newaxis, :, :]
       self.reduce_alphas_log = model.alphas_reduce.detach().cpu().numpy()[np.newaxis, :, :]
-    self.valid_train_ref_idx: int = 0
+    self.valid_train_ref_idx: int = len(
+        self.training_loss.data) if self.training_loss.data is not None else 0
     self.plot_interval = int(len(test_dataset) / 4)  # type: ignore
     self.debug = debug
     self.forward_hooks: dict[nn.Module, torch.utils.hooks.RemovableHandle] = {}
@@ -305,6 +306,9 @@ class Monitor:
   def add_training_loss(self, loss: float):
     self.steps += 1
     self.training_loss.add(nparray(loss))
+    if (self.steps + 1) % self.vis_interval == 0:
+      loss = np.array(self.training_loss.data[-self.vis_interval:]).mean()
+      self.smoothed_training_loss.add(nparray(loss))
 
   def end_epoch(self,
                 model: SearchNetwork | EvalNetwork,
@@ -315,9 +319,6 @@ class Monitor:
     if self.vis_acts_and_grads and visualize:
       self.add_hooks(model,
                      architect)  # visualize activations and gradients at beginning of each epoch
-    if self.training_loss.data is not None:
-      loss = np.array(self.training_loss.data[-self.vis_interval:]).mean()
-      self.smoothed_training_loss.add(nparray(loss))
 
   def eval_test_batch(self, title: str, model: SearchNetwork | EvalNetwork):
     self.logger.info("Eval test batch ...")

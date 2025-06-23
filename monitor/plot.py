@@ -46,14 +46,12 @@ class TwoLines(Plot):
                label2: str | None = None,
                title: str | None = None,
                grid: bool = False,
-               ylabel: str | None = None,
-               num_steps_per_epoch: int | None = None):
+               ylabel: str | None = None):
     self.label1 = label1
     self.label2 = label2
     self.title = title
     self.grid = grid
     self.ylabel = ylabel
-    self.num_steps_per_epoch = num_steps_per_epoch
 
   def plot(self,
            data: np.ndarray,
@@ -75,11 +73,6 @@ class TwoLines(Plot):
     if self.ylabel:
       axes.set_ylabel(self.ylabel)
     axes.grid(self.grid)
-    if self.num_steps_per_epoch is not None:
-      for epoch in range(1, data.shape[1] // self.num_steps_per_epoch):
-        step = epoch * self.num_steps_per_epoch
-        plt.axvline(x=step, color='gray', linestyle='--', alpha=0.5)
-        plt.text(step, plt.ylim()[1], f'Epoch {epoch}', rotation=90, va='top', ha='right', fontsize=8)
     if self.label1 or self.label2:
       fig.legend()
     return fig, axes
