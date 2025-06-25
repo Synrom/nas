@@ -104,9 +104,9 @@ class Network(nn.Module):
       channel_sampling_prob: float,
       dropout_rate: float,
       num_ops: int,
-      steps: int = 4,
-      multiplier: int = 4,
-      stem_multiplier: int = 3,
+      steps: int,
+      multiplier: int,
+      stem_multiplier: int,
   ):
     """
         Args:
@@ -131,6 +131,7 @@ class Network(nn.Module):
     self._switch_normal = switch_normal
     self._switch_reduce = switch_reduce
     self._dropout_rate = dropout_rate
+    self._stem_multiplier = stem_multiplier
     self.device = device
 
     C_curr = stem_multiplier * C
@@ -163,10 +164,20 @@ class Network(nn.Module):
     """
         Inits a new Network with the same structure and alphas as self, but new modules.
         """
-    model_new = Network(self._C, self._num_classes, self._layers, self._criterion, self.device,
-                        self._switch_normal, self._switch_reduce, self._reduction_ratio,
-                        self._partial_connection_prob, self._dropout_rate,
-                        self._num_ops).to(self.device)
+    model_new = Network(self._C,
+                        self._num_classes,
+                        self._layers,
+                        self._criterion,
+                        self.device,
+                        self._switch_normal,
+                        self._switch_reduce,
+                        self._reduction_ratio,
+                        self._partial_connection_prob,
+                        self._dropout_rate,
+                        self._num_ops,
+                        multiplier=self._multiplier,
+                        stem_multiplier=self._stem_multiplier,
+                        steps=self._steps).to(self.device)
     for x, y in zip(model_new.arch_parameters(), self.arch_parameters()):
       x.data.copy_(y.data)
     return model_new
@@ -176,7 +187,7 @@ class Network(nn.Module):
     Clones this network.
     """
     model = self.new()
-    for x, y in zip(model.parameters(), self.parameters()):
+    for (name, x), y in zip(model.named_parameters(), self.parameters()):
       x.data.copy_(y.data)
     return model
 
@@ -236,7 +247,9 @@ class Network(nn.Module):
                     reduction_ratio=self._reduction_ratio,
                     num_ops=stage.operations,
                     channel_sampling_prob=stage.channel_sampling_prob,
-                    dropout_rate=stage.dropout)
+                    dropout_rate=stage.dropout,
+                    stem_multiplier=self._stem_multiplier,
+                    multiplier=self._multiplier)
     model.to(self.device)
 
     offset = 0
