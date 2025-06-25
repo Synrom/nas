@@ -295,7 +295,8 @@ if __name__ == '__main__':
                     num_ops=stage.operations,
                     channel_sampling_prob=stage.channel_sampling_prob,
                     dropout_rate=stage.dropout,
-                    multiplier=3)
+                    multiplier=config.steps,
+                    stem_multiplier=4)
     optimizer = torch.optim.SGD(model.parameters(),
                                 config.learning_rate,
                                 momentum=config.momentum,
