@@ -127,8 +127,6 @@ def infer(valid_queue: DataLoader, model: NetworkCIFAR, criterion: nn.Module):
   acc = tp / nr_samples
   topk_acc = topk_tp / nr_samples
   monitor.add_validation_loss(mean_loss, acc.item(), topk_acc.item())
-  error_rate = (1 - acc.item()) * 100
-  monitor.add_error_rate(error_rate)
   return mean_loss, acc.item(), topk_acc.item()
 
 

@@ -133,3 +133,4 @@ class PPCSearchConfig:
   vis_eigenvalues: bool = True
   past_train: str | None = None
   steps: int = 4
+  vis_se_block: bool = True

@@ -4,6 +4,7 @@ import pickle
 from typing import TypeVar, Generic
 from pathlib import Path
 import matplotlib
+from matplotlib.patches import Patch
 
 matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
@@ -78,6 +79,38 @@ class Live(Generic[T]):
 
 
 T2 = TypeVar('T2', bound='Plot')
+
+
+class ManualLiveGrid(Live):
+  """This live plot is currently non persisting!"""
+
+  def __init__(self,
+               path: Path,
+               rows: int,
+               cols: int,
+               row_size: int,
+               col_size: int,
+               legend: list[Patch] | None = None):
+    self.path = path
+    self.rows = rows
+    self.cols = cols
+    self.col_size = col_size
+    self.row_size = row_size
+    self.legend = legend
+    self.fig, self.axes = plt.subplots(self.rows,
+                                       self.cols,
+                                       squeeze=False,
+                                       figsize=(self.col_size * self.cols, self.row_size * self.rows))
+
+  def commit(self):
+    if self.legend is not None:
+      self.fig.legend(handles=self.legend,
+                      loc='upper center',
+                      ncol=len(self.legend),
+                      bbox_to_anchor=(0.5, 1.05))
+    self.fig.tight_layout()
+    self.savefig(self.fig)
+    plt.close(self.fig)
 
 
 class LiveGrid(Live, Generic[T2]):

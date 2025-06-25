@@ -28,6 +28,17 @@ PRIMITIVES: list[str] = [
     "dil_conv_5x5",
 ]
 
+SHORT_PRIMITIVES: list[str] = [
+    "none",
+    "max",
+    "avg",
+    "skip",
+    "sep3x3",
+    "sep5x5",
+    "dil3x3",
+    "dil5x5",
+]
+
 NASNet = Genotype(
     normal=[
         ("sep_conv_5x5", 1),

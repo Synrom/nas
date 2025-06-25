@@ -21,7 +21,7 @@ from utils import clone_model, models_eq
 from config import PPCSearchConfig, PPCPastTrainRun, add_neglatible_bool_to_parser
 from models.ppc.model_search import Network
 from models.ppc.config import read_stage_config
-from models.ppc.switch import init_switch_all_true
+from models.ppc.switch import init_switch
 from models.darts.architect import Architect
 from models.darts.genotypes import save_genotype, PRIMITIVES
 
@@ -67,6 +67,7 @@ def parse_args() -> PPCSearchConfig:
   add_neglatible_bool_to_parser(parser, "--no-input-dependent-baseline", "input_dependent_baseline")
   add_neglatible_bool_to_parser(parser, "--no-eval-test-batch", "eval_test_batch")
   add_neglatible_bool_to_parser(parser, "--no-live-validate", "live_validate")
+  add_neglatible_bool_to_parser(parser, "--np-vis-se-block", "vis_se_block")
   parser.add_argument("--debug", action="store_true", dest="debug")
   parser.set_defaults(debug=False)
   add_neglatible_bool_to_parser(parser, "--no-vis-alphas", "vis_alphas")
@@ -112,6 +113,7 @@ def validate_model(model: Network, criterion: nn.Module, monitor: Monitor,
         topk_acc += float(p in target[i])
       topk_acc /= target.shape[0]
       topk_accs.append(topk_acc)
+      break  # TODO: delete
   mean_loss = np.array(losses).mean()
   mean_acc = np.array(accs).mean()
   mean_topk_acc = np.array(topk_accs).mean()
@@ -180,6 +182,8 @@ def train(model: Network,
         monitor.visualize_eigenvalues(input_search, target_search, architect)
 
     monitor.add_training_loss(loss.item())
+
+    break  # TODO: delete
 
 
 if __name__ == '__main__':
@@ -280,8 +284,8 @@ if __name__ == '__main__':
     start_epoch = 0
     start_stage = 0
     stage = stages[start_stage]
-    switch_normal = init_switch_all_true(config.steps, len(PRIMITIVES))
-    switch_reduce = init_switch_all_true(config.steps, len(PRIMITIVES))
+    switch_normal = init_switch(config.steps, len(PRIMITIVES), True)
+    switch_reduce = init_switch(config.steps, len(PRIMITIVES), True)
     model = Network(C=stage.channels,
                     num_classes=10,
                     layers=stage.cells,
@@ -322,7 +326,9 @@ if __name__ == '__main__':
                     logdir=config.logdir,
                     vis_interval=config.vis_interval,
                     vis_acts_and_grads=config.vis_activations_and_gradients,
-                    num_steps_per_epoch=len(train_queue))
+                    num_steps_per_epoch=len(train_queue),
+                    stage=start_stage)
+  monitor.count_nr_parameters(model)
 
   for stage_idx in range(start_stage, len(stages)):
     stage = stages[stage_idx]
@@ -334,11 +340,12 @@ if __name__ == '__main__':
       train(model, criterion, monitor, architect, lr, epoch, optimizer, train_alphas=epoch >= 10)
 
       # visualize everything
+      visualize = epoch % config.vis_interval == 0
       model.eval()
       if config.input_dependent_baseline is True:
         monitor.input_dependent_baseline(model, criterion)
       if config.eval_test_batch is True:
-        monitor.eval_test_batch(f"After {epoch} epochs", model)
+        monitor.eval_test_batch(f"At stage {stage_idx} and epoch {epoch}", model)
       if config.live_validate is True:
         validate_model(model, criterion, monitor, valid_queue)
       if config.vis_alphas is True:
@@ -349,6 +356,8 @@ if __name__ == '__main__':
         monitor.visualize_genotypes(model.genotype())
       if config.vis_lrs:
         monitor.visualize_lrs(lr)
+      if visualize and config.vis_se_block:
+        monitor.visualize_se_blocks(model)
 
       scheduler.step()
 
@@ -378,14 +387,16 @@ if __name__ == '__main__':
         with open(train_checkpoint_path, "w") as fstream:
           json.dump(asdict(train_checkpoint), fstream)
 
-      monitor.end_epoch(model, architect)
-      monitor.commit()
+      monitor.end_epoch(model, architect, visualize)
 
       # save genotype
       if epoch == config.epochs - 1:
         genotype_path = monitor.path / f"{config.runid}_genotype.json"
         save_genotype(genotype_path, model.genotype())
         monitor.logger.info(f"Saved resulting genotype to {genotype_path.as_posix()}.")
+
+      if visualize or stop:
+        monitor.commit()
 
       if stop:
         exit()
@@ -407,3 +418,6 @@ if __name__ == '__main__':
                                          betas=(0.5, 0.999),
                                          weight_decay=config.arch_weight_decay)
       monitor.reset_hook(model, architect)
+      monitor.next_stage(model, stage)
+    else:
+      monitor.commit()

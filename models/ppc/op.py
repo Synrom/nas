@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import numpy as np
 
 from models.darts.genotypes import PRIMITIVES
 from models.darts.operations import OPS, ReLUConvBN
@@ -66,6 +67,7 @@ class SEBlock(nn.Module):
     self.a2 = nn.ReLU()
     self.w3 = nn.Linear(reduced_C, C)
     self.a3 = nn.Sigmoid()
+    self.attn_last: None | np.ndarray = None
 
   def forward(self, x: torch.Tensor) -> torch.Tensor:
     B, C, _, _ = x.shape
@@ -73,4 +75,5 @@ class SEBlock(nn.Module):
     attn = self.a1(self.w1(attn))
     attn = self.a2(self.w2(attn))
     attn = self.a3(self.w3(attn))
+    self.attn_last = attn.detach().cpu().numpy()
     return x * attn.unsqueeze(-1).unsqueeze(-1)

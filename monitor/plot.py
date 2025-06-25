@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from graphviz import Digraph
 from PIL import Image as PILImage
 import io
+from models.ppc.switch import Switch
 
 
 class Plot(ABC):
@@ -36,6 +37,38 @@ class Plot(ABC):
       fig = plt.figure()
     if axes is None:
       axes = fig.add_subplot(1, 1, 1)
+    return fig, axes
+
+
+class MultiLines(Plot):
+
+  def __init__(self,
+               ylabel: str | None = None,
+               xlabel: str | None = None,
+               title: str | None = None,
+               grid: bool = True,
+               linewidth: float = 1.5):
+    self.ylabel = ylabel
+    self.xlabel = xlabel
+    self.grid = grid
+    self.title = title
+    self.linewidth = linewidth
+
+  def plot(self,
+           data: np.ndarray,
+           fig: Figure | None = None,
+           axes: Axes | None = None) -> tuple[Figure, Axes]:
+    fig, axes = self.fig_and_axes(fig, axes)
+    colors = plt.cm.tab10.colors[:data.shape[0]]  # type: ignore
+    for i in range(data.shape[0]):
+      axes.plot(data[i], color=colors[i], linewidth=self.linewidth)
+    if self.title is not None:
+      axes.set_title(self.title)
+    axes.grid(self.grid)
+    if self.ylabel is not None:
+      axes.set_ylabel(self.ylabel)
+    if self.xlabel is not None:
+      axes.set_xlabel(self.xlabel)
     return fig, axes
 
 
@@ -255,13 +288,16 @@ class Hist(Plot):
 
 class VisAlpha(Plot):
 
-  def __init__(self, steps: int, primitives: list[str], only_last: int = 5):
+  def __init__(self, steps: int, primitives: list[str], switch: Switch, verbose: bool,
+               short_primitives: list[str]):
     self.steps = steps
     self.primitives = primitives
     self.k = sum(1 for i in range(steps) for n in range(2 + i))
-    self.num_ops = len(self.primitives)
-    self.colors = plt.cm.tab10.colors[:self.num_ops]  # type: ignore
-    self.only_last = only_last
+    self.num_ops = sum(switch[2][0])
+    self.colors = plt.cm.tab10.colors[:len(primitives)]  # type: ignore
+    self.switch = switch
+    self.verbose = verbose
+    self.short_primitives = short_primitives
 
   def draw_graph_subplot(self, ax: Axes, step: int, weights: np.ndarray):
     G = nx.DiGraph()
@@ -279,7 +315,10 @@ class VisAlpha(Plot):
     # Add nodes and edges
     for node in input_nodes:
       G.add_node(node)
-      G.add_edge(node, output_node, weight=weights[input_nodes.index(node)])
+      G.add_edge(node,
+                 output_node,
+                 weight=weights[input_nodes.index(node)],
+                 index=input_nodes.index(node))
     G.add_node(output_node)
 
     # Draw graph
@@ -295,6 +334,11 @@ class VisAlpha(Plot):
     # Annotate edges with bars and weight values
     for (u, v, d) in G.edges(data=True):
       weight = d["weight"]
+      index = d["index"]
+      activations = self.switch[step][index]
+      ops = [name for name, act in zip(self.short_primitives, activations) if act is True]
+      assert len(ops) == len(weight)
+
       x = (positions[u][0] + positions[v][0]) / 2
       y = (positions[u][1] + positions[v][1]) / 2
       inset = inset_axes(ax,
@@ -306,8 +350,14 @@ class VisAlpha(Plot):
                          borderpad=0)
 
       # Draw the bar plot in the inset
-      inset.bar(range(len(weight)), weight, color=self.colors)
-      inset.set_xticks([])
+      assert len(self.colors) == len(activations)
+      bar_colors = [color for color, act in zip(self.colors, activations) if act is True]
+      assert len(bar_colors) == len(weight)
+      inset.bar(range(len(weight)), weight, color=bar_colors)
+      inset.set_xticks(range(len(weight)), ops)
+      for label in inset.get_xticklabels():
+        label.set_rotation(45)
+        label.set_ha('right')
       inset.set_yticks([])
       inset.set_ylim(0, 1)
       inset.grid(True, axis='y', linestyle='--', alpha=0.5)
@@ -341,9 +391,13 @@ class VisAlpha(Plot):
 
     legend_labels = self.primitives
     handles = [
-        mpatches.Patch(color=self.colors[i], label=legend_labels[i]) for i in range(self.num_ops)
+        mpatches.Patch(color=self.colors[i], label=legend_labels[i])
+        for i in range(len(self.primitives))
     ]
-    fig.legend(handles=handles, loc='upper center', ncol=self.num_ops, bbox_to_anchor=(0.5, 1.05))
+    fig.legend(handles=handles,
+               loc='upper center',
+               ncol=len(self.primitives),
+               bbox_to_anchor=(0.5, 1.05))
 
     return fig, ax[0, 0]
 

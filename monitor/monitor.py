@@ -4,6 +4,7 @@ import sys
 import copy
 import numpy as np
 import matplotlib
+import matplotlib.patches as mpatches
 
 matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
@@ -14,6 +15,7 @@ import torch.nn.functional as F
 import torch
 import os
 import random
+from torch.utils.hooks import RemovableHandle
 
 from dataset.cifar import cifar_label2name
 from utils import clone_optimizer, clone_model
@@ -22,10 +24,13 @@ from models.darts.model import NetworkCIFAR as DartsEvalNetwork
 from models.ppc.model_search import Network as PPCSearchNetwork
 from models.darts.architect import Architect
 from config import DartsSearchConfig, PPCSearchConfig
-from monitor.live import Live, LiveGrid, nparray
-from monitor.plot import Line, Grid, Bar, Image, plot_load_data, Hist, TwoLines, ColorMapOptions, VisAlpha, GenotypeGraph
-from models.darts.genotypes import PRIMITIVES, Genotype
+from monitor.live import Live, LiveGrid, nparray, ManualLiveGrid
+from monitor.plot import Line, Grid, Bar, Image, plot_load_data, Hist, TwoLines, ColorMapOptions, VisAlpha, GenotypeGraph, MultiLines
+from models.darts.genotypes import PRIMITIVES, Genotype, SHORT_PRIMITIVES
 from models.darts.architect import Architect, Hook
+from models.ppc.config import StageConfig
+from models.ppc.switch import init_switch
+from models.ppc.model_search import SEBlock
 
 SearchNetwork = DartsSearchNetwork | PPCSearchNetwork
 EvalNetwork = DartsEvalNetwork
@@ -70,6 +75,7 @@ class Monitor:
     stdout_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
     logger.addHandler(stdout_handler)
+    self.stage = stage
     self.logger = logger
     self.label2name = label2name
     self.primitives = primitives
@@ -100,16 +106,24 @@ class Monitor:
         Line(xlabel="CIFAR-10 Test Error (%)", ylabel="Training Epoch", grid=True))
     last_5 = (self.epoch // 5) * 5
     if isinstance(model, SearchNetwork):
-      self.vis_alphas_normal = Live(self.path / f"alphas_normal-{last_5}-{last_5+4}.png",
-                                    data_path=self.path / "alphas_normal.png.npy",
-                                    plot=VisAlpha(steps=model._steps, primitives=self.primitives))
-      self.vis_alphas_reduce = Live(self.path / f"alphas_reduce-{last_5}-{last_5+4}.png",
-                                    data_path=self.path / "alphas_reduce.png.npy",
-                                    plot=VisAlpha(steps=model._steps, primitives=self.primitives))
+      self.vis_alphas_normal = Live(self.path / f"alphas_normal-{self.stage}-{last_5}-{last_5+4}.png",
+                                    data_path=self.path / f"alphas_normal-{self.stage}.png.npy",
+                                    plot=VisAlpha(steps=model._steps,
+                                                  primitives=self.primitives,
+                                                  switch=init_switch(model._steps,
+                                                                     len(self.primitives), True),
+                                                  verbose=False,
+                                                  short_primitives=SHORT_PRIMITIVES))
+      self.vis_alphas_reduce = Live(self.path / f"alphas_reduce-{self.stage}-{last_5}-{last_5+4}.png",
+                                    data_path=self.path / f"alphas_reduce-{self.stage}.png.npy",
+                                    plot=VisAlpha(steps=model._steps,
+                                                  primitives=self.primitives,
+                                                  switch=init_switch(model._steps,
+                                                                     len(self.primitives), True),
+                                                  verbose=False,
+                                                  short_primitives=SHORT_PRIMITIVES))
       self.vis_alphas_distribution: LiveGrid[Hist] = LiveGrid(self.path / "alphas_distribution.png",
                                                               Grid(Hist(50), rows=0, cols=2))
-      self.normal_alphas_log = model.alphas_normal.detach().cpu().numpy()[np.newaxis, :, :]
-      self.reduce_alphas_log = model.alphas_reduce.detach().cpu().numpy()[np.newaxis, :, :]
     self.valid_train_ref_idx: int = len(
         self.training_loss.data) if self.training_loss.data is not None else 0
     self.plot_interval = int(len(test_dataset) / 4)  # type: ignore
@@ -128,7 +142,6 @@ class Monitor:
     self.hessian_hook: Hook | None = None
     self.vis_eigvals = Live(self.path / "eigenvalues.png",
                             Line(title="Hessian Eigenvalues", ylabel="Dominant Eigenvalue"))
-    self.stage = stage
     if self.vis_acts_and_grads:
       self.add_hooks(model, architect)
 
@@ -148,6 +161,9 @@ class Monitor:
     self.vis_eigvals.commit()
 
   def reset_hook(self, model: SearchNetwork | EvalNetwork, architect: None | Architect = None):
+    if self.hook_vis is not None:
+      self.logger.info("Logging activation inputs and gradients")
+      self.hook_vis.commit()
     self.hook_vis = None
     for hook in self.forward_checks.values():
       hook.remove()
@@ -161,10 +177,19 @@ class Monitor:
     self.backward_checks = {}
     self.forward_hooks = {}
     self.backward_hooks = {}
-    self.add_hooks(model, architect)
 
-  def next_stage(self):
+  def next_stage(self, model: PPCSearchNetwork, stage: StageConfig):
     self.stage += 1
+    self.epoch = 0
+    self.steps = 0
+    self.logger.info(f"Entering Stage {self.stage}")
+    self.logger.info(f"- {stage.cells} cells")
+    self.logger.info(f"- {stage.operations} operations")
+    self.logger.info(f"- {stage.channels} init channels")
+    self.logger.info(f"- {stage.channel_sampling_prob} channel sampling probability")
+    self.logger.info(f"- {stage.epochs} epochs")
+    self.logger.info(f"- {stage.dropout} dropout")
+    self.count_nr_parameters(model)
     title = f"Stage {self.stage}"
     self.training_loss.add_marker(title)
     self.valid_loss.add_marker(title)
@@ -173,6 +198,22 @@ class Monitor:
     self.valid_err_rate.add_marker(title)
     self.valid_topk_acc.add_marker(title)
     self.vis_lrs.add_marker(title)
+    last_5 = (self.epoch // 5) * 5
+    self.commit()
+    self.vis_alphas_normal = Live(self.path / f"alphas_normal-{self.stage}-{last_5}-{last_5+4}.png",
+                                  data_path=self.path / f"alphas_normal-{self.stage}.png.npy",
+                                  plot=VisAlpha(steps=model._steps,
+                                                primitives=self.primitives,
+                                                switch=model._switch_normal,
+                                                verbose=True,
+                                                short_primitives=SHORT_PRIMITIVES))
+    self.vis_alphas_reduce = Live(self.path / f"alphas_reduce-{self.stage}-{last_5}-{last_5+4}.png",
+                                  data_path=self.path / f"alphas_reduce-{self.stage}.png.npy",
+                                  plot=VisAlpha(steps=model._steps,
+                                                primitives=self.primitives,
+                                                switch=model._switch_reduce,
+                                                verbose=True,
+                                                short_primitives=SHORT_PRIMITIVES))
 
   def add_hooks(self, model: SearchNetwork | EvalNetwork, architect: None | Architect = None):
     if self.hook_vis:
@@ -180,8 +221,8 @@ class Monitor:
       self.hook_vis.commit()
     i = 1
     nr_relus = len([m for m in model.modules() if isinstance(m, nn.ReLU)])
-    interval = nr_relus // 7 if nr_relus > 7 else nr_relus
-    rows = 0
+    interval = nr_relus // 7 if nr_relus > 7 else 1
+    rows = min(7, nr_relus)
 
     # check for inf or Nan values
     def forward_check(module, input, output):
@@ -204,23 +245,24 @@ class Monitor:
         self.backward_checks[module].remove()
         self.backward_checks.pop(module)
 
+    row = 0
     for module in model.modules():
       if isinstance(module, nn.ReLU):
         if not isinstance(module, torch.nn.Sequential) and not len(list(module.children())) > 0:
           self.forward_checks[module] = module.register_forward_hook(forward_check)
           self.backward_checks[module] = module.register_full_backward_hook(backward_check)
-        if i % interval == 0:
+        if (i + 1) % interval == 0 and i / interval < rows:
           self.forward_hooks[module] = module.register_forward_hook(
-              self.plot_inputs(f"{i}th ReLU Layer Inputs", rows))
+              self.plot_inputs(f"{i}th ReLU Layer Inputs", row))
           self.backward_hooks[module] = module.register_full_backward_hook(
-              self.plot_gradients(f"{i}th ReLu Layer Gradients", rows))
-          rows += 1
+              self.plot_gradients(f"{i}th ReLu Layer Gradients", row))
+          row += 1
         i += 1
     if architect is not None:
       self.register_alpha_hook(rows, 0, architect)
       self.register_hessian_hook(rows, 1, architect)
-    rows += 1
-    self.hook_vis = LiveGrid(self.path / f"epoch-{self.epoch-1}-activations-and-gradients.png",
+    self.hook_vis = LiveGrid(self.path /
+                             f"stage-{self.stage}-epoch-{self.epoch}-activations-and-gradients.png",
                              Grid(Hist(50), rows, 2),
                              persist=False)
 
@@ -316,6 +358,29 @@ class Monitor:
                 visualize: bool = True):
     self.epoch += 1
     self.steps = 0
+    last_5 = (self.epoch // 5) * 5
+    if isinstance(model, SearchNetwork) and last_5 != ((self.epoch - 1) // 5) * 5:
+      self.vis_alphas_normal.commit()
+      self.vis_alphas_reduce.commit()
+      switch_normal = self.vis_alphas_normal.plot.switch
+      switch_reduce = self.vis_alphas_reduce.plot.switch
+      verbose_normal = self.vis_alphas_normal.plot.verbose
+      verbose_reduce = self.vis_alphas_reduce.plot.verbose
+      self.vis_alphas_normal = Live(self.path / f"alphas_normal-{self.stage}-{last_5}-{last_5+4}.png",
+                                    data_path=self.path / f"alphas_normal-{self.stage}.png.npy",
+                                    plot=VisAlpha(steps=model._steps,
+                                                  primitives=self.primitives,
+                                                  switch=switch_normal,
+                                                  verbose=verbose_normal,
+                                                  short_primitives=SHORT_PRIMITIVES))
+      self.vis_alphas_reduce = Live(self.path / f"alphas_reduce-{self.stage}-{last_5}-{last_5+4}.png",
+                                    data_path=self.path / f"alphas_reduce-{self.stage}.png.npy",
+                                    plot=VisAlpha(steps=model._steps,
+                                                  primitives=self.primitives,
+                                                  switch=switch_reduce,
+                                                  verbose=verbose_reduce,
+                                                  short_primitives=SHORT_PRIMITIVES))
+
     if self.vis_acts_and_grads and visualize:
       self.add_hooks(model,
                      architect)  # visualize activations and gradients at beginning of each epoch
@@ -362,8 +427,7 @@ class Monitor:
     self.logger.info(f"\t- validation accuracy {acc:.2f}")
     self.valid_topk_acc.add(np.array([topk_acc]))
     self.logger.info(f"\t- validation topk accuracy {topk_acc:.2f}")
-
-  def add_error_rate(self, error_rate: float):
+    error_rate = (1 - acc) * 100
     self.valid_err_rate.add(nparray(error_rate))
 
   def visualize_eigenvalues(self, input_valid: torch.Tensor, target_valid: torch.Tensor,
@@ -432,6 +496,57 @@ class Monitor:
         continue
       assert input.grad[idx].sum() == 0.0  # type: ignore
     model.zero_grad()
+
+  def visualize_se_blocks(self, model: PPCSearchNetwork):
+    self.logger.info(f"Visualize SE Blocks ...")
+    nr_se_blocks = len([m for m in model.modules() if isinstance(m, SEBlock)])
+    interval = nr_se_blocks // 7 if nr_se_blocks > 7 else 1
+    rows = min(7, nr_se_blocks)
+    _, input, target = self.test_batch
+    input, target = input.to(self.device), target.to(self.device)
+    indices: list[int] = []
+    j: int = 0
+    while len(indices) < 4 and j < target.shape[0]:
+      if target[j] not in indices:
+        indices.append(target[j].item())
+      j += 1
+    labels = [self.label2name[idx] for idx in indices]
+    input = input[indices]
+    target = target[indices]
+    colors = plt.cm.tab10.colors[:len(labels)]  # type: ignore
+    legend = [mpatches.Patch(color=colors[i], label=labels[i]) for i in range(len(labels))]
+    live = ManualLiveGrid(self.path / f"stage-{self.stage}-epoch-{self.epoch}-se-blocks.png", rows, 1,
+                          2, 3, legend)
+    hooks: dict[nn.Module, RemovableHandle] = {}
+
+    def create_hook(row: int, i: int):
+
+      def hook(module: SEBlock, _1, _2):
+        if module.attn_last is not None:
+          plot = MultiLines(ylabel="Activation",
+                            xlabel="Channel Index",
+                            grid=True,
+                            title=f"SE_{i}",
+                            linewidth=0.5)
+          plot.plot(module.attn_last, live.fig, live.axes[row, 0])
+        hooks[module].remove()
+        hooks.pop(module)
+
+      return hook
+
+    i = 0
+    row = 0
+    for module in model.modules():
+      if isinstance(module, SEBlock):
+        if (i + 1) % interval == 0 and i / interval < rows:
+          hooks[module] = module.register_forward_hook(create_hook(row, i))
+          row += 1
+        i += 1
+    with torch.no_grad():
+      model(input)
+    live.commit()
+    for hook in hooks.values():
+      hook.remove()
 
   def overfit_single_batch(
       self,
