@@ -113,7 +113,6 @@ def validate_model(model: Network, criterion: nn.Module, monitor: Monitor,
         topk_acc += float(p in target[i])
       topk_acc /= target.shape[0]
       topk_accs.append(topk_acc)
-      break  # TODO: delete
   mean_loss = np.array(losses).mean()
   mean_acc = np.array(accs).mean()
   mean_topk_acc = np.array(topk_accs).mean()
@@ -182,8 +181,6 @@ def train(model: Network,
         monitor.visualize_eigenvalues(input_search, target_search, architect)
 
     monitor.add_training_loss(loss.item())
-
-    break  # TODO: delete
 
 
 if __name__ == '__main__':
@@ -400,8 +397,6 @@ if __name__ == '__main__':
 
       if stop:
         exit()
-
-      break  # TODO: delete
 
     if stage_idx + 1 < len(stages):
       stage = stages[stage_idx + 1]
