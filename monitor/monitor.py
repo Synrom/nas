@@ -110,16 +110,14 @@ class Monitor:
                                     data_path=self.path / f"alphas_normal-{self.stage}.png.npy",
                                     plot=VisAlpha(steps=model._steps,
                                                   primitives=self.primitives,
-                                                  switch=init_switch(model._steps,
-                                                                     len(self.primitives), True),
+                                                  switch=model._switch_normal,
                                                   verbose=False,
                                                   short_primitives=SHORT_PRIMITIVES))
       self.vis_alphas_reduce = Live(self.path / f"alphas_reduce-{self.stage}-{last_5}-{last_5+4}.png",
                                     data_path=self.path / f"alphas_reduce-{self.stage}.png.npy",
                                     plot=VisAlpha(steps=model._steps,
                                                   primitives=self.primitives,
-                                                  switch=init_switch(model._steps,
-                                                                     len(self.primitives), True),
+                                                  switch=model._switch_reduce,
                                                   verbose=False,
                                                   short_primitives=SHORT_PRIMITIVES))
       self.vis_alphas_distribution: LiveGrid[Hist] = LiveGrid(self.path / "alphas_distribution.png",
@@ -424,10 +422,11 @@ class Monitor:
     self.logger.info(f"After {self.steps} batches of epoch {self.epoch}:")
     self.logger.info(f"\t- validation loss {loss:.2f}")
     self.valid_acc.add(np.array([acc]))
-    self.logger.info(f"\t- validation accuracy {acc:.2f}")
+    self.logger.info(f"\t- validation accuracy {acc * 100:.2f}%")
     self.valid_topk_acc.add(np.array([topk_acc]))
-    self.logger.info(f"\t- validation topk accuracy {topk_acc:.2f}")
+    self.logger.info(f"\t- validation topk accuracy {topk_acc * 100:.2f}%")
     error_rate = (1 - acc) * 100
+    self.logger.info(f"\t- error rate {error_rate:.2f}%")
     self.valid_err_rate.add(nparray(error_rate))
 
   def visualize_eigenvalues(self, input_valid: torch.Tensor, target_valid: torch.Tensor,
@@ -453,10 +452,10 @@ class Monitor:
     row = self.vis_genotypes.add_row()
     self.vis_genotypes.add_idx(
         self.vis_genotypes.plot.default.convert_genotype_to_array(genotype.normal), row, 0,
-        f"Normal cell at {self.epoch}th epoch")
+        f"Normal cell at {self.epoch}th epoch {self.stage}th stage")
     self.vis_genotypes.add_idx(
         self.vis_genotypes.plot.default.convert_genotype_to_array(genotype.reduce), row, 1,
-        f"Reduction cell at {self.epoch}th epoch")
+        f"Reduction cell at {self.epoch}th epoch {self.stage}th stage")
 
   def input_dependent_baseline(self, model: nn.Module, criterion: nn.Module):
     _, input, target = self.test_batch
@@ -505,14 +504,17 @@ class Monitor:
     _, input, target = self.test_batch
     input, target = input.to(self.device), target.to(self.device)
     indices: list[int] = []
+    indice_targets: list[int] = []
     j: int = 0
     while len(indices) < 4 and j < target.shape[0]:
-      if target[j] not in indices:
-        indices.append(target[j].item())
+      if target[j].item() not in indice_targets:
+        indices.append(j)
+        indice_targets.append(target[j].item())
       j += 1
-    labels = [self.label2name[idx] for idx in indices]
-    input = input[indices]
-    target = target[indices]
+    labels = [self.label2name[idx] for idx in indice_targets]
+    tensor_indices = torch.tensor(indices).to(self.device)
+    input = input[tensor_indices]
+    target = target[tensor_indices]
     colors = plt.cm.tab10.colors[:len(labels)]  # type: ignore
     legend = [mpatches.Patch(color=colors[i], label=labels[i]) for i in range(len(labels))]
     live = ManualLiveGrid(self.path / f"stage-{self.stage}-epoch-{self.epoch}-se-blocks.png", rows, 1,
@@ -542,6 +544,7 @@ class Monitor:
           hooks[module] = module.register_forward_hook(create_hook(row, i))
           row += 1
         i += 1
+    model.eval()
     with torch.no_grad():
       model(input)
     live.commit()
