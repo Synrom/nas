@@ -126,6 +126,7 @@ def train(model: Network,
           lr: float,
           epoch: int,
           optimizer: Optimizer,
+          stage: int,
           train_alphas: bool = True):
   monitor.logger.info(f"Train {epoch} epoch")
   for idx, (imgs, input_train, target_train) in enumerate(train_queue):
@@ -173,7 +174,7 @@ def train(model: Network,
         del bf_criterion
 
     if idx % config.vis_interval == 0:
-      monitor.logger.info(f"After {idx} steps of {epoch} epoch: {loss.item()}")
+      monitor.logger.info(f"After {idx} steps of {epoch} epoch {stage} stage: {loss.item()}")
 
     if idx == 0:  # at beginning of each epoch
       if config.vis_eigenvalues:
@@ -334,7 +335,15 @@ if __name__ == '__main__':
       lr = scheduler.get_lr()[0]
 
       # train single batch
-      train(model, criterion, monitor, architect, lr, epoch, optimizer, train_alphas=epoch >= 10)
+      train(model,
+            criterion,
+            monitor,
+            architect,
+            lr,
+            epoch,
+            optimizer,
+            stage_idx,
+            train_alphas=epoch >= 10)
 
       # visualize everything
       visualize = epoch % config.vis_interval == 0
@@ -366,7 +375,7 @@ if __name__ == '__main__':
 
       # save model
       if stop or epoch % config.vis_interval == 0 or epoch == stage.epochs + 9:
-        model_checkpoint_path = f"{config.logdir}/{config.runid}/checkpoint-{epoch}-epochs.pkl"
+        model_checkpoint_path = f"{config.logdir}/{config.runid}/checkpoint-{stage_idx}-{epoch}-epochs.pkl"
         model.save_to_file(Path(model_checkpoint_path))
         optimizer_checkpoint_path = f"{config.logdir}/{config.runid}/optimizer.pkl"
         train_checkpoint_path = f"{config.logdir}/{config.runid}/last_run.json"
@@ -380,7 +389,7 @@ if __name__ == '__main__':
                                            checkpoint=model_checkpoint_path,
                                            scheduler_checkpoint=optimizer_checkpoint_path,
                                            stage=stage_idx)
-        print(f"Saving {asdict(train_checkpoint)} to {train_checkpoint_path}")
+        monitor.logger.info(f"Saving {asdict(train_checkpoint)} to {train_checkpoint_path}")
         with open(train_checkpoint_path, "w") as fstream:
           json.dump(asdict(train_checkpoint), fstream)
 
@@ -416,3 +425,4 @@ if __name__ == '__main__':
       monitor.next_stage(model, stage)
     else:
       monitor.commit()
+    start_epoch = 0

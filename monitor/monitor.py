@@ -353,10 +353,11 @@ class Monitor:
     self.logger.info(f"After {self.steps} batches of epoch {self.epoch}:")
     self.logger.info(f"\t- validation loss {loss:.2f}")
     self.valid_acc.add(np.array([acc]))
-    self.logger.info(f"\t- validation accuracy {acc:.2f}")
+    self.logger.info(f"\t- validation accuracy {acc * 100:.2f}%")
     self.valid_topk_acc.add(np.array([topk_acc]))
-    self.logger.info(f"\t- validation topk accuracy {topk_acc:.2f}")
+    self.logger.info(f"\t- validation topk accuracy {topk_acc * 100:.2f}%")
     error_rate = (1 - acc) * 100
+    self.logger.info(f"\t- error rate {error_rate:.2f}%")
     self.valid_err_rate.add(nparray(error_rate))
 
   def visualize_eigenvalues(self, input_valid: torch.Tensor, target_valid: torch.Tensor,
@@ -452,14 +453,17 @@ class Monitor:
     _, input, target = self.test_batch
     input, target = input.to(self.device), target.to(self.device)
     indices: list[int] = []
+    indice_targets: list[int] = []
     j: int = 0
     while len(indices) < 4 and j < target.shape[0]:
-      if target[j] not in indices:
-        indices.append(target[j].item())
+      if target[j].item() not in indice_targets:
+        indices.append(j)
+        indice_targets.append(target[j].item())
       j += 1
-    labels = [self.label2name[idx] for idx in indices]
-    input = input[indices]
-    target = target[indices]
+    labels = [self.label2name[idx] for idx in indice_targets]
+    tensor_indices = torch.tensor(indices).to(self.device)
+    input = input[tensor_indices]
+    target = target[tensor_indices]
     colors = plt.cm.tab10.colors[:len(labels)]  # type: ignore
     legend = [mpatches.Patch(color=colors[i], label=labels[i]) for i in range(len(labels))]
     hooks: dict[nn.Module, RemovableHandle] = {}
@@ -486,6 +490,7 @@ class Monitor:
         if (i + 1) % interval == 0 and i / interval < rows:
           hooks[module] = module.register_forward_hook(create_hook(i))
         i += 1
+    model.eval()
     with torch.no_grad():
       model(input)
     for hook in hooks.values():
