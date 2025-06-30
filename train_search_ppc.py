@@ -409,7 +409,7 @@ if __name__ == '__main__':
 
     if stage_idx + 1 < len(stages):
       stage = stages[stage_idx + 1]
-      model = model.transfer_to_stage(stage, stage_idx == len(stages) - 1)
+      model = model.transfer_to_stage(stage, stage_idx == len(stages) - 2)
       optimizer = torch.optim.SGD(model.parameters(),
                                   config.learning_rate,
                                   momentum=config.momentum,
