@@ -2,7 +2,6 @@ import json
 import time
 import torch
 import torch.nn.functional as F
-import random
 import argparse
 import time
 import numpy as np
@@ -207,11 +206,11 @@ if __name__ == '__main__':
   torch.backends.cudnn.enabled = True
 
   # set random seed
-  torch.manual_seed(config.seed)
-  torch.cuda.manual_seed(config.seed)
-  torch.cuda.manual_seed_all(config.seed)
-  np.random.seed(config.seed)
-  random.seed(config.seed)
+  #torch.manual_seed(config.seed)
+  #torch.cuda.manual_seed(config.seed)
+  #torch.cuda.manual_seed_all(config.seed)
+  #np.random.seed(config.seed)
+  #random.seed(config.seed)
 
   train_transform = transforms.Compose([
       transforms.RandomCrop(32, padding=4),
@@ -349,7 +348,7 @@ if __name__ == '__main__':
       if config.vis_alphas is True:
         monitor.visualize_alphas(
             F.softmax(model.alphas_normal, dim=1).detach().cpu().numpy(),
-            F.softmax(model.alphas_reduce, dim=1).detach().cpu().numpy())
+            F.softmax(model.alphas_reduce, dim=1).detach().cpu().numpy(), model)
       if config.vis_genotypes is True:
         monitor.visualize_genotypes(model.genotype())
       if config.vis_lrs:

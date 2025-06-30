@@ -19,6 +19,7 @@ from graphviz import Digraph
 from PIL import Image as PILImage
 import io
 from models.ppc.switch import Switch
+from matplotlib.patches import Patch
 
 
 class Plot(ABC):
@@ -47,12 +48,14 @@ class MultiLines(Plot):
                xlabel: str | None = None,
                title: str | None = None,
                grid: bool = True,
-               linewidth: float = 1.5):
+               linewidth: float = 1.5,
+               legend: list[Patch] | None = None):
     self.ylabel = ylabel
     self.xlabel = xlabel
     self.grid = grid
     self.title = title
     self.linewidth = linewidth
+    self.legend = legend
 
   def plot(self,
            data: np.ndarray,
@@ -69,6 +72,11 @@ class MultiLines(Plot):
       axes.set_ylabel(self.ylabel)
     if self.xlabel is not None:
       axes.set_xlabel(self.xlabel)
+    if self.legend is not None:
+      fig.legend(handles=self.legend,
+                 loc='upper center',
+                 ncol=len(self.legend),
+                 bbox_to_anchor=(0.5, 1.05))
     return fig, axes
 
 
@@ -286,7 +294,7 @@ class Hist(Plot):
     return fig, axes
 
 
-class VisAlpha(Plot):
+class VisAlpha:
 
   def __init__(self, steps: int, primitives: list[str], switch: Switch, verbose: bool,
                short_primitives: list[str]):
@@ -299,7 +307,10 @@ class VisAlpha(Plot):
     self.verbose = verbose
     self.short_primitives = short_primitives
 
-  def draw_graph_subplot(self, ax: Axes, step: int, weights: np.ndarray):
+  def draw_graph_subplot(self, step: int, weights: np.ndarray):
+    fig = plt.figure(figsize=(25, 7))
+    ax = fig.add_subplot(1, 1, 1)
+
     G = nx.DiGraph()
     input_nodes = ["Input 0", "Input 1"]
     input_nodes += [f"Node {j}" for j in range(2, step)]
@@ -362,33 +373,7 @@ class VisAlpha(Plot):
       inset.set_ylim(0, 1)
       inset.grid(True, axis='y', linestyle='--', alpha=0.5)
 
-    ax.set_title(f"Node {step}", fontsize=20)
     ax.axis("off")
-
-  def plot(self,
-           data: np.ndarray,
-           fig: Figure | None = None,
-           axes: Axes | None = None) -> tuple[Figure, Axes]:
-    # Create one subplot per step
-    row_start = ((data.shape[0] - 1) // 5) * 5
-    row_end = data.shape[0]
-    rows = row_end - row_start
-    fig, ax = plt.subplots(rows,
-                           self.steps,
-                           squeeze=False,
-                           figsize=(25 * self.steps, 7 * rows),
-                           gridspec_kw={'hspace': 0.5})
-
-    for row in range(row_start, row_end):
-      offset = 0
-      for col in range(self.steps):
-        self.draw_graph_subplot(ax[row - row_start, col],
-                                step=col + 2,
-                                weights=data[row][offset:offset + col + 2])
-        offset += col + 2
-      #y_pos = 0.92 - (row - row_start) * 0.48  # Adjust spacing as needed based on figure size
-      #fig.text(0.5, y_pos, f"{row}th Epoch", va='center', ha='left', fontsize=25, fontweight='bold')
-
     legend_labels = self.primitives
     handles = [
         mpatches.Patch(color=self.colors[i], label=legend_labels[i])
@@ -399,7 +384,7 @@ class VisAlpha(Plot):
                ncol=len(self.primitives),
                bbox_to_anchor=(0.5, 1.05))
 
-    return fig, ax[0, 0]
+    return fig
 
 
 class GenotypeGraph(Plot):

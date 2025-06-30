@@ -310,10 +310,6 @@ if __name__ == '__main__':
       monitor.eval_test_batch(f"After {epoch} epochs", model)
     if config.live_validate is True:
       validate_model(model, criterion, monitor, valid_queue, config)
-    if config.vis_alphas is True:
-      monitor.visualize_alphas(
-          F.softmax(model.alphas_normal, dim=1).detach().cpu().numpy(),
-          F.softmax(model.alphas_reduce, dim=1).detach().cpu().numpy())
     if config.vis_genotypes is True:
       monitor.visualize_genotypes(model.genotype())
     if config.vis_lrs:
