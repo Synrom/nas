@@ -77,6 +77,10 @@ def parse_args() -> PPCSearchConfig:
                       type=int,
                       default=200,
                       help="Interval to visualize training loss")
+  parser.add_argument("--vis_epoch_interval",
+                      type=int,
+                      default=200,
+                      help="Interval to visualize training loss")
   args = parser.parse_args()
   return PPCSearchConfig(**vars(args))
 
@@ -165,7 +169,7 @@ def train(model: Network,
       if config.overfit_single_batch is True:
         bf_model, bf_criterion = model.clone(), clone_model(criterion)
         monitor.overfit_single_batch(model, input_train, target_train, input_search, target_search,
-                                     criterion, optimizer, alpha_optimizer, config, lr, 100)
+                                     criterion, optimizer, alpha_optimizer, config, lr, 500)
 
         # model and critertion should not have changed
         assert models_eq(bf_model, model) == True
@@ -346,19 +350,19 @@ if __name__ == '__main__':
             train_alphas=epoch >= 10)
 
       # visualize everything
-      visualize = epoch % config.vis_interval == 0
+      visualize = epoch % config.vis_epoch_interval == 0
       model.eval()
-      if config.input_dependent_baseline is True:
+      if config.input_dependent_baseline is True and visualize:
         monitor.input_dependent_baseline(model, criterion)
       if config.eval_test_batch is True:
         monitor.eval_test_batch(f"At stage {stage_idx} and epoch {epoch}", model)
       if config.live_validate is True:
         validate_model(model, criterion, monitor, valid_queue)
-      if config.vis_alphas is True:
+      if config.vis_alphas is True and epoch >= 10:
         monitor.visualize_alphas(
             F.softmax(model.alphas_normal, dim=1).detach().cpu().numpy(),
             F.softmax(model.alphas_reduce, dim=1).detach().cpu().numpy(), model)
-      if config.vis_genotypes is True:
+      if config.vis_genotypes is True and epoch >= 10:
         monitor.visualize_genotypes(model.genotype())
       if config.vis_lrs:
         monitor.visualize_lrs(lr)

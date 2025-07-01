@@ -68,7 +68,7 @@ class Cell(nn.Module):
       h2 = states[self._indices[2 * i + 1]]
       op1 = self._ops[2 * i]
       op2 = self._ops[2 * i + 1]
-      h1 = op1(h1)  # TODO: adjust for MaxPool2D ([0])
+      h1 = op1(h1)
       h2 = op2(h2)
       if self.training and drop_prob > 0.0:
         if not isinstance(op1, Identity):
@@ -114,7 +114,7 @@ class NetworkCIFAR(nn.Module):
     an auxiliary head for debugging and a classifier in the end.
     """
 
-  def __init__(self, C: int, num_classes: int, layers: int, genotype: Genotype, device: torch.device):
+  def __init__(self, C: int, num_classes: int, layers: int, genotype: Genotype, device: torch.device, drop_path_prob: float):
     super(NetworkCIFAR, self).__init__()
     self._layers = layers
     self._genotype = genotype
@@ -127,7 +127,7 @@ class NetworkCIFAR(nn.Module):
     C_curr = stem_multiplier * C
     self.stem = nn.Sequential(nn.Conv2d(3, C_curr, 3, padding=1, bias=False), nn.BatchNorm2d(C_curr))
 
-    self.drop_path_prob = 0.0
+    self.drop_path_prob = drop_path_prob
 
     C_prev_prev, C_prev, C_curr = C_curr, C_curr, C
     self.cells = nn.ModuleList()
@@ -180,7 +180,7 @@ class NetworkCIFAR(nn.Module):
 
   def clone(self) -> NetworkCIFAR:
     model_new = NetworkCIFAR(self._C, self._num_classes, self._layers, self._genotype,
-                             self.device).to(self.device)
+                             self.device, self.drop_path_prob).to(self.device)
     for x, y in zip(model_new.parameters(), self.parameters()):
       x.data.copy_(y.data)
     return model_new

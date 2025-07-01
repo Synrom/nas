@@ -252,21 +252,21 @@ class Network(nn.Module):
                     multiplier=self._multiplier)
     model.to(self.device)
 
-    offset = 0
-    for i in range(2, self._steps + 2):
-      for j in range(i):
-        for alpha_idx in range(stage.operations):
-          old_alpha_idx_normal = switch_idx_to_alpha_idx(
-              self._switch_normal[i][j], alpha_idx_to_switch_idx(switch_normal[i][j], alpha_idx))
-          model.alphas_normal[offset,
-                              alpha_idx].data.copy_(self.alphas_normal[offset,
-                                                                       old_alpha_idx_normal].data)
-          old_alpha_idx_reduce = switch_idx_to_alpha_idx(
-              self._switch_reduce[i][j], alpha_idx_to_switch_idx(switch_reduce[i][j], alpha_idx))
-          model.alphas_reduce[offset,
-                              alpha_idx].data.copy_(self.alphas_reduce[offset,
-                                                                       old_alpha_idx_reduce].data)
-        offset += 1
+    #offset = 0
+    #for i in range(2, self._steps + 2):
+    #  for j in range(i):
+    #    for alpha_idx in range(stage.operations):
+    #      old_alpha_idx_normal = switch_idx_to_alpha_idx(
+    #          self._switch_normal[i][j], alpha_idx_to_switch_idx(switch_normal[i][j], alpha_idx))
+    #      model.alphas_normal[offset,
+    #                          alpha_idx].data.copy_(self.alphas_normal[offset,
+    #                                                                   old_alpha_idx_normal].data)
+    #      old_alpha_idx_reduce = switch_idx_to_alpha_idx(
+    #          self._switch_reduce[i][j], alpha_idx_to_switch_idx(switch_reduce[i][j], alpha_idx))
+    #      model.alphas_reduce[offset,
+    #                          alpha_idx].data.copy_(self.alphas_reduce[offset,
+    #                                                                   old_alpha_idx_reduce].data)
+    #    offset += 1
     return model
 
   def arch_parameters(self) -> list[Variable]:

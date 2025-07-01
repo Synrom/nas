@@ -32,7 +32,7 @@ def parse_args() -> EvalConfig:
   parser.add_argument('--layers', type=int, default=20, help='total number of layers')
   parser.add_argument('--cutout', action='store_true', default=False, help='use cutout')
   parser.add_argument('--cutout_length', type=int, default=16, help='cutout length')
-  parser.add_argument('--drop_path_prob', type=float, default=0.2, help='drop path probability')
+  parser.add_argument('--drop_path_prob', type=float, default=0.3, help='drop path probability')
   parser.add_argument('--seed', type=int, default=0, help='random seed')
   parser.add_argument('--genotype', type=str, help='Path to genotype')
   parser.add_argument('--grad_clip', type=float, default=5, help='gradient clipping')
@@ -62,8 +62,9 @@ CIFAR_CLASSES = 10
 
 
 def train(train_queue: DataLoader, model: NetworkCIFAR, criterion: nn.Module,
-          optimizer: torch.optim.Optimizer, monitor: Monitor):
+          optimizer: torch.optim.Optimizer, monitor: Monitor, epoch: int):
   model.train()
+  model.drop_path_prob = config.drop_path_prob * epoch / config.epochs
 
   for step, (imgs, input, target) in enumerate(train_queue):
     input, target = input.to(model.device), target.to(model.device)
@@ -103,6 +104,8 @@ def infer(valid_queue: DataLoader, model: NetworkCIFAR, criterion: nn.Module):
   tp = torch.tensor(0).to(model.device)
   topk_tp = torch.tensor(0).to(model.device)
   nr_samples = 0
+  model.drop_path_prob = 0.0
+
   with torch.no_grad():
     for step, (img, input, target) in enumerate(valid_queue):
       input, target = input.to(model.device), target.to(model.device)
@@ -135,7 +138,6 @@ if __name__ == "__main__":
 
   config = parse_args()
 
-  supports_bf16 = False
   print(f"Torch is available: {torch.cuda.is_available()}")
   if torch.backends.mps.is_available():
     device = torch.device("mps")
@@ -143,10 +145,6 @@ if __name__ == "__main__":
   else:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     device_str = "cuda" if torch.cuda.is_available() else "cpu"
-    if torch.cuda.is_available():
-      supports_bf16 = torch.cuda.is_bf16_supported()
-      if supports_bf16:
-        print("Using bfloat16")
   print(f"Device is {device}")
 
   np.random.seed(config.seed)
@@ -202,7 +200,7 @@ if __name__ == "__main__":
       scheduler.load_state_dict(scheduler_states["scheduler_state"])
   else:
     start_epoch = 0
-    model = NetworkCIFAR(config.init_channels, CIFAR_CLASSES, config.layers, genotype, device)
+    model = NetworkCIFAR(config.init_channels, CIFAR_CLASSES, config.layers, genotype, device, config.drop_path_prob)
     optimizer = torch.optim.SGD(model.parameters(),
                                 config.learning_rate,
                                 momentum=config.momentum,
@@ -230,9 +228,9 @@ if __name__ == "__main__":
     monitor.count_nr_parameters(model)
 
   for epoch in range(start_epoch, config.epochs):
-    model.drop_path_prob = config.drop_path_prob * epoch / config.epochs
+    scheduler.step()
 
-    train(train_queue, model, criterion, optimizer, monitor)
+    train(train_queue, model, criterion, optimizer, monitor, epoch)
 
     visualize = (epoch % config.vis_interval) == 0
 
@@ -248,8 +246,6 @@ if __name__ == "__main__":
     if visualize:
       monitor.smoothed_training_loss.add_marker(f"Epoch {epoch}")
       monitor.training_loss.add_marker(f"Epoch {epoch}")
-
-    scheduler.step()
 
     stop = False
     current_time = time.time()
