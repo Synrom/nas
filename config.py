@@ -71,7 +71,7 @@ class EvalConfig:
   cutout: bool = False
   cutout_length: int = 16
   drop_path_prob: float = 0.3
-  seed: int = 2
+  seed: int = 0
   grad_clip: float = 5
   runid: str = "eval"
   logdir: str = "log"
@@ -126,6 +126,7 @@ class PPCSearchConfig:
   input_dependent_baseline: bool = True
   eval_test_batch: bool = True
   vis_interval: int = 200
+  vis_epoch_interval: int = 200
   live_validate: bool = True
   vis_alphas: bool = True
   vis_genotypes: bool = True
