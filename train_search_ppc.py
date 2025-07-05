@@ -73,6 +73,7 @@ def parse_args() -> PPCSearchConfig:
   add_neglatible_bool_to_parser(parser, "--no-vis-genotypes", "vis_genotypes")
   add_neglatible_bool_to_parser(parser, "--no-vis-lrs", "vis_lrs")
   add_neglatible_bool_to_parser(parser, "--no-vis-eigenvalues", "vis_eigenvalues")
+  parser.add_argument("--vis_mixed_op_grad", action="store_true", dest="vis_mixed_op_grad", default=True)
   parser.add_argument("--vis_interval",
                       type=int,
                       default=200,
@@ -176,7 +177,10 @@ def train(model: Network,
         assert models_eq(bf_criterion, criterion) == True
         del bf_model
         del bf_criterion
-
+      
+      if config.vis_mixed_op_grad is True: # change this to be at the start of last epoch
+        monitor.visualize_mixed_op_gradients(model, input_train, target_train, optimizer)
+      
     if idx % config.vis_interval == 0:
       monitor.logger.info(f"After {idx} steps of {epoch} epoch {stage} stage: {loss.item()}")
 
