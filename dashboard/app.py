@@ -70,10 +70,15 @@ def show_home():
 
 
 def show_grid() -> None:
-  st.set_page_config(layout="wide")
   vis: GridConfig = st.session_state.grid
+  centered = False
+  if vis.title == "Overfit Sinlge Batch" or vis.title == "Alpha Distributions":
+    st.set_page_config(layout="centered")
+    centered = True
+  else:
+    st.set_page_config(layout="wide")
   st.title(vis.title)
-  header()
+  header(centered)
   for row in vis.rows:
     if len(row.visualizations) == 0:
       continue

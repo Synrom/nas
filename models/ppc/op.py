@@ -26,6 +26,7 @@ class PartialMixedOp(nn.Module):
       if "pool" in primitive:
         op = nn.Sequential(op, nn.BatchNorm2d(self.C_sampled, affine=False))
       self._ops.append(op)
+    self.alphas: None | np.ndarray = None
 
   def forward(self, x: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
     """
@@ -34,10 +35,15 @@ class PartialMixedOp(nn.Module):
         x: edge input
         weights: the alphas of the operations
     """
+    self.alphas = weights.detach().cpu().numpy()
+
     if self._stride > 1:  # reduction cell
       rest = self.pool(x)
     else:
       rest = x
+
+    # Clone rest to avoid in-place modification of a view
+    rest = rest.clone()
 
     indices = torch.randperm(self.C)
     sampled_indices = indices[:self.C_sampled].sort()[0]

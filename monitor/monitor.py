@@ -31,6 +31,8 @@ from models.darts.architect import Architect, Hook
 from models.ppc.config import StageConfig
 from models.ppc.model_search import SEBlock
 from dashboard.config import write_dashboard_config, DashboardConfig
+from models.ppc.op import PartialMixedOp
+from models.ppc.model_search import Cell as PpcCell
 
 SearchNetwork = DartsSearchNetwork | PPCSearchNetwork
 EvalNetwork = DartsEvalNetwork
@@ -124,7 +126,7 @@ class Monitor:
     self.hook_vis_grads = LiveGrid(f"Gradients", self.path)
     self.test_batch_vis: LiveGrid = LiveGrid("Test Batch", self.path)
     self.vis_genotypes: LiveGrid = LiveGrid("Genotypes", self.path)
-    self.vis_lrs = Live("Learning Rates", self.path, Line("Model Learning Rate", grid=True))
+    self.vis_lrs = Live("Learning Rate", self.path, Line("Learning Rate", grid=True))
     self.vis_acts_and_grads = vis_acts_and_grads
     self.alpha_hook: Hook | None = None
     self.se_vis = LiveGrid("SE Block", self.path)
@@ -581,3 +583,44 @@ class Monitor:
       visualization.commit()
 
     self.logger.info(f"Overfitted single batch for {n} iterations leading to loss {loss.item():.2f}")
+
+  def visualize_mixed_op_gradients(self, model: PPCSearchNetwork, input: torch.Tensor, target: torch.Tensor, optimizer: optim.Optimizer):
+    # we want to visualize the input gradients for the operations
+
+    hooks: dict[nn.Module, torch.utils.hooks.RemovableHandle] = {}
+    vis: LiveGrid = LiveGrid("Mixed Operations Gradients", self.path)
+    plot: Hist = Hist(50)
+
+    def create_preprocessor_hook(i: int):
+      def hook(module: nn.Module, grad_input: torch.Tensor, grad_output: torch.Tensor):
+        vis.next_row(f"Cell {i-1}")
+        assert len(grad_input) == 1
+        vis.add_entry(plot.plot(grad_input[0].detach().flatten().cpu().numpy())[0], "Gradients Preprocessor 0")
+        if module in hooks:
+          hooks[module].remove()
+          hooks.pop(module)
+      return hook
+      
+    def create_op_hook(alpha: float):
+      def hook(module: nn.Module, grad_input: torch.Tensor, grad_output: torch.Tensor):
+        name =  type(module).__name__
+        assert len(grad_input) == 1
+        vis.add_entry(plot.plot(grad_input[0].detach().flatten().cpu().numpy())[0], f"Gradients of {name} with alpha {alpha}")
+        if module in hooks:
+          hooks[module].remove()
+          hooks.pop(module)
+      return hook
+
+    i = 1
+    for module in model.modules():
+      if isinstance(module, PpcCell):
+        ops: PartialMixedOp = module._ops[0]
+        preprocessor = module.preprocess0
+        hooks[preprocessor] = preprocessor.register_full_backward_hook(create_preprocessor_hook(i))
+        for idx,op in enumerate(ops._ops):
+          hooks[op]  = op.register_full_backward_hook(create_op_hook(ops.alphas[idx]))
+        i += 1
+
+    loss = model._loss(input, target)
+    loss.backward()
+    optimizer.zero_grad()
