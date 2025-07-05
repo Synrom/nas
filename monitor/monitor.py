@@ -106,8 +106,8 @@ class Monitor:
                                Line(title="Validation topk accuracy", ylabel="Loss", grid=True))
     self.valid_err_rate = Live(
         "Validation Error Rate", self.path,
-        Line(xlabel="CIFAR-10 Test Error (%)",
-             ylabel="Training Epoch",
+        Line(ylabel="CIFAR-10 Test Error (%)",
+             xlabel="Training Epoch",
              title="Validation Error Rate",
              grid=True))
     if isinstance(model, SearchNetwork):
@@ -193,19 +193,22 @@ class Monitor:
 
     # check for inf or Nan values
     def forward_check(module, input, output):
-      if any(torch.isnan(x).any() or torch.isinf(x).any() for x in input):
+      if any(torch.isnan(x.detach()).any() or torch.isinf(x).any() for x in input):
         self.logger.error(f"[FORWARD] NaN or Inf detected in input of {module.__class__.__name__}")
-      if torch.isnan(output).any() or torch.isinf(output).any():
+      if torch.isnan(output.detach().clone()).any() or torch.isinf(output).any():
         self.logger.error(f"[FORWARD] NaN or Inf detected in output of {module.__class__.__name__}")
       if module in self.forward_checks:
         self.forward_checks[module].remove()
         self.forward_checks.pop(module)
 
     def backward_check(module, grad_input, grad_output):
-      if any(torch.isnan(g).any() or torch.isinf(g).any() for g in grad_input if g is not None):
+      if any(
+          torch.isnan(g.detach()).any() or torch.isinf(g).any() for g in grad_input if g is not None):
         self.logger.error(
             f"[BACKWARD] NaN or Inf detected in grad_input of {module.__class__.__name__}")
-      if any(torch.isnan(g).any() or torch.isinf(g).any() for g in grad_output if g is not None):
+      if any(
+          torch.isnan(g.detach()).any() or torch.isinf(g).any() for g in grad_output
+          if g is not None):
         self.logger.error(
             f"[BACKWARD] NaN or Inf detected in grad_output of {module.__class__.__name__}")
       if module in self.backward_checks:
@@ -321,7 +324,10 @@ class Monitor:
     self.logger.info("Eval test batch ...")
     imgs, input, target = self.test_batch
     input, target = input.to(self.device), target.to(self.device)
-    out = model(input)
+    if isinstance(model, SearchNetwork):
+      out = model(input)
+    else:
+      out, _ = model(input)
     loss = self.criterion(out, target)
     self.logger.info(f"Loss on test batch is {loss.item():.2f}")
     probs = F.softmax(out, dim=1).cpu().detach().numpy()
@@ -408,14 +414,20 @@ class Monitor:
     self.vis_genotypes.add_entry(plot.plot(normal_genotype)[0], "Normal")
     self.vis_genotypes.add_entry(plot.plot(reduce_genotype)[0], "Reduce")
 
-  def input_dependent_baseline(self, model: nn.Module, criterion: nn.Module):
+  def input_dependent_baseline(self, model: SearchNetwork | EvalNetwork, criterion: nn.Module):
     _, input, target = self.test_batch
     input, target = input.to(self.device), target.to(self.device)
-    logits = model(input)
+    if isinstance(model, SearchNetwork):
+      logits = model(input)
+    else:
+      logits, _ = model(input)
     loss_real = criterion(logits, target)
 
     zeroes = torch.zeros_like(input)
-    out_zeroes = model(zeroes)
+    if isinstance(model, SearchNetwork):
+      out_zeroes = model(zeroes)
+    else:
+      out_zeroes, _ = model(zeroes)
     loss_zeroes = criterion(out_zeroes, target)
 
     if loss_zeroes < loss_real:
@@ -428,11 +440,14 @@ class Monitor:
       self.logger.warning(f"\t- with real input is {loss_real:.2f}")
       self.logger.warning(f"\t- with only zeroes is {loss_zeroes:.2f}")
 
-  def test_data_sharing_inbetween_batch(self, model: nn.Module, X: torch.Tensor):
+  def test_data_sharing_inbetween_batch(self, model: SearchNetwork | EvalNetwork, X: torch.Tensor):
     model.eval()
     input = X.clone().detach().requires_grad_(True)
     input.retain_grad()
-    out = model(input)
+    if isinstance(model, SearchNetwork):
+      out = model(input)
+    else:
+      out, _ = model(input)
     assert input.shape[0] == out.shape[0]
     i = random.choice(range(input.shape[0]))
     loss = out[i].sum()
@@ -574,7 +589,7 @@ class Monitor:
     model.train()
     for _ in range(n):
       optimizer.zero_grad()
-      logits = model(input)
+      logits, _ = model(input)
       loss = criterion(logits, target)
       loss.backward()
       nn.utils.clip_grad_norm_(model.parameters(), grad_clip)

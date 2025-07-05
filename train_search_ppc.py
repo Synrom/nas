@@ -416,6 +416,7 @@ if __name__ == '__main__':
         exit()
 
     if stage_idx + 1 < len(stages):
+      monitor.reset_hook(model, architect)
       stage = stages[stage_idx + 1]
       model = model.transfer_to_stage(stage, stage_idx == len(stages) - 2)
       optimizer = torch.optim.SGD(model.parameters(),
@@ -429,7 +430,7 @@ if __name__ == '__main__':
                                          lr=config.arch_learning_rate,
                                          betas=(0.5, 0.999),
                                          weight_decay=config.arch_weight_decay)
-      monitor.reset_hook(model, architect)
+      architect = Architect(model, config, alpha_optimizer)
       monitor.next_stage(model, stage)
     else:
       monitor.commit()

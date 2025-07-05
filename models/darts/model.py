@@ -114,13 +114,15 @@ class NetworkCIFAR(nn.Module):
     an auxiliary head for debugging and a classifier in the end.
     """
 
-  def __init__(self, C: int, num_classes: int, layers: int, genotype: Genotype, device: torch.device, drop_path_prob: float):
+  def __init__(self, C: int, num_classes: int, layers: int, genotype: Genotype, device: torch.device,
+               drop_path_prob: float, auxiliary: bool):
     super(NetworkCIFAR, self).__init__()
     self._layers = layers
     self._genotype = genotype
     self._C = C
     self._num_classes = num_classes
     self._steps = len(genotype.normal) // 2
+    self._auxilary = auxiliary
     self.device = device
 
     stem_multiplier = 3
@@ -148,22 +150,31 @@ class NetworkCIFAR(nn.Module):
       # the output of the cell is the concatination of the concat nodes
       # therefor the channel output is the length of concat nodes times the number of channels
       C_prev_prev, C_prev = C_prev, cell.multiplier * C_curr
+      if i == 2 * layers // 3:
+        C_to_auxiliary = C_prev
+
+    if auxiliary:
+      self.auxiliary_head = AuxiliaryHeadCIFAR(C_to_auxiliary, num_classes)
 
     self.global_pooling = nn.AdaptiveAvgPool2d(1)
     self.classifier = nn.Linear(C_prev, num_classes)
 
-  def forward(self, input):
+  def forward(self, input: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     # first two inputs are output of a small convNet
+    logits_aux = None
     s0 = s1 = self.stem(input)
 
     for i, cell in enumerate(self.cells):
       # output of two last cells is input to next cell
       s0, s1 = s1, cell(s0, s1, self.drop_path_prob)
+      if i == 2 * self._layers // 3:
+        if self._auxilary and self.training:
+          logits_aux = self.auxiliary_head(s1)
 
     # classifier
     out = self.global_pooling(s1)
     logits = self.classifier(out.view(out.size(0), -1))
-    return logits
+    return logits, logits_aux  # type: ignore
 
   def save_to_file(self, path: Path):
     """
@@ -179,8 +190,8 @@ class NetworkCIFAR(nn.Module):
     return torch.load(path, weights_only=False)
 
   def clone(self) -> NetworkCIFAR:
-    model_new = NetworkCIFAR(self._C, self._num_classes, self._layers, self._genotype,
-                             self.device, self.drop_path_prob).to(self.device)
+    model_new = NetworkCIFAR(self._C, self._num_classes, self._layers, self._genotype, self.device,
+                             self.drop_path_prob, self._auxilary).to(self.device)
     for x, y in zip(model_new.parameters(), self.parameters()):
       x.data.copy_(y.data)
     return model_new
