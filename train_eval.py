@@ -32,6 +32,8 @@ def parse_args() -> EvalConfig:
   parser.add_argument('--layers', type=int, default=20, help='total number of layers')
   parser.add_argument('--cutout', action='store_true', default=False, help='use cutout')
   parser.add_argument('--cutout_length', type=int, default=16, help='cutout length')
+  parser.add_argument('--auxiliary', action='store_true', default=False, help='use auxiliary tower')
+  parser.add_argument('--auxiliary_weight', type=float, default=0.4, help='weight for auxiliary loss')
   parser.add_argument('--drop_path_prob', type=float, default=0.3, help='drop path probability')
   parser.add_argument('--seed', type=int, default=0, help='random seed')
   parser.add_argument('--genotype', type=str, help='Path to genotype')
@@ -70,8 +72,11 @@ def train(train_queue: DataLoader, model: NetworkCIFAR, criterion: nn.Module,
     input, target = input.to(model.device), target.to(model.device)
 
     optimizer.zero_grad()
-    logits = model(input)
+    logits, logits_aux = model(input)
     loss = criterion(logits, target)
+    if config.auxiliary:
+      loss_aux = criterion(logits_aux, target)
+      loss += config.auxiliary_weight * loss_aux
     loss.backward()
     nn.utils.clip_grad_norm_(model.parameters(), config.grad_clip)
     optimizer.step()
@@ -84,12 +89,13 @@ def train(train_queue: DataLoader, model: NetworkCIFAR, criterion: nn.Module,
       if config.overfit_single_batch is True:
         bf_model, bf_criterion = model.clone(), clone_model(criterion)
         monitor.overfit_single_batch_eval(model, input, target, criterion, optimizer,
-                                          config.grad_clip, 100)
+                                          config.grad_clip, 300)
         # model and critertion should not have changed
         assert models_eq(bf_model, model) == True
         assert models_eq(bf_criterion, criterion) == True
         del bf_model
         del bf_criterion
+      model.train()
 
     if step % config.vis_interval == 0:
       monitor.logger.info(f"After {step} steps of {epoch} epoch: {loss.item()}")
@@ -111,7 +117,7 @@ def infer(valid_queue: DataLoader, model: NetworkCIFAR, criterion: nn.Module):
       input, target = input.to(model.device), target.to(model.device)
 
       # loss
-      logits = model(input)
+      logits, _ = model(input)
       loss = criterion(logits, target)
       losses.append(loss.item())
 
@@ -147,11 +153,8 @@ if __name__ == "__main__":
     device_str = "cuda" if torch.cuda.is_available() else "cpu"
   print(f"Device is {device}")
 
-  np.random.seed(config.seed)
   cudnn.benchmark = True
-  torch.manual_seed(config.seed)
   cudnn.enabled = True
-  torch.cuda.manual_seed(config.seed)
 
   train_transform = transforms.Compose([
       transforms.RandomCrop(32, padding=4),
@@ -200,7 +203,8 @@ if __name__ == "__main__":
       scheduler.load_state_dict(scheduler_states["scheduler_state"])
   else:
     start_epoch = 0
-    model = NetworkCIFAR(config.init_channels, CIFAR_CLASSES, config.layers, genotype, device, config.drop_path_prob)
+    model = NetworkCIFAR(config.init_channels, CIFAR_CLASSES, config.layers, genotype, device,
+                         config.drop_path_prob, config.auxiliary)
     optimizer = torch.optim.SGD(model.parameters(),
                                 config.learning_rate,
                                 momentum=config.momentum,
