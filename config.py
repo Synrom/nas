@@ -88,6 +88,9 @@ class EvalConfig:
   vis_lrs: bool = True
   past_train: str | None = None
   count_params: bool = True
+  auxiliary: bool = False
+  auxiliary_weight: float = 0.4
+  dropout: float = 0.5
 
 
 def add_neglatible_bool_to_parser(parser: argparse.ArgumentParser, cmd: str, name: str):
