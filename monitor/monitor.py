@@ -146,7 +146,7 @@ class Monitor:
     self.vis_lrs.commit()
     self.vis_eigvals.commit()
 
-  def reset_hook(self, model: SearchNetwork | EvalNetwork, architect: None | Architect = None):
+  def reset_hook(self):
     for hook in self.forward_checks.values():
       hook.remove()
     for hook in self.backward_checks.values():
@@ -184,7 +184,7 @@ class Monitor:
 
   def add_hooks(self, model: SearchNetwork | EvalNetwork, architect: None | Architect = None):
     i = 1
-    nr_relus = len([m for m in model.modules() if isinstance(m, nn.ReLU)])
+    nr_relus = len([m for m in model.modules() if isinstance(m, nn.ReLU) or isinstance(m, nn.GELU)])
     interval = nr_relus // 7 if nr_relus > 7 else 1
     rows = min(7, nr_relus)
 
@@ -217,15 +217,15 @@ class Monitor:
 
     row = 0
     for module in model.modules():
-      if isinstance(module, nn.ReLU):
+      if isinstance(module, nn.ReLU) or isinstance(module, nn.GELU):
         if not isinstance(module, torch.nn.Sequential) and not len(list(module.children())) > 0:
           self.forward_checks[module] = module.register_forward_hook(forward_check)
           self.backward_checks[module] = module.register_full_backward_hook(backward_check)
         if (i + 1) % interval == 0 and i / interval < rows:
           self.forward_hooks[module] = module.register_forward_hook(
-              self.plot_inputs(f"{i}th ReLU Layer Inputs"))
+              self.plot_inputs(f"{i}th Activation Layer Inputs"))
           self.backward_hooks[module] = module.register_full_backward_hook(
-              self.plot_gradients(f"{i}th ReLu Layer Gradients"))
+              self.plot_gradients(f"{i}th Activation Layer Gradients"))
           row += 1
         i += 1
     if architect is not None:
@@ -599,7 +599,9 @@ class Monitor:
 
     self.logger.info(f"Overfitted single batch for {n} iterations leading to loss {loss.item():.2f}")
 
-  def visualize_mixed_op_gradients(self, model: PPCSearchNetwork, input: torch.Tensor, target: torch.Tensor, optimizer: optim.Optimizer):
+  # type: ignore
+  def visualize_mixed_op_gradients(self, model: PPCSearchNetwork, input: torch.Tensor,
+                                   target: torch.Tensor, optimizer: optim.Optimizer):
     # we want to visualize the input gradients for the operations
 
     hooks: dict[nn.Module, torch.utils.hooks.RemovableHandle] = {}
@@ -607,33 +609,41 @@ class Monitor:
     plot: Hist = Hist(50)
 
     def create_preprocessor_hook(i: int):
+
       def hook(module: nn.Module, grad_input: torch.Tensor, grad_output: torch.Tensor):
         vis.next_row(f"Cell {i-1}")
         assert len(grad_input) == 1
-        vis.add_entry(plot.plot(grad_input[0].detach().flatten().cpu().numpy())[0], "Gradients Preprocessor 0")
+        vis.add_entry(
+            plot.plot(grad_input[0].detach().flatten().cpu().numpy())[0], "Gradients Preprocessor 0")
         if module in hooks:
           hooks[module].remove()
           hooks.pop(module)
+
       return hook
-      
+
     def create_op_hook(alpha: float):
+
       def hook(module: nn.Module, grad_input: torch.Tensor, grad_output: torch.Tensor):
-        name =  type(module).__name__
+        name = type(module).__name__
         assert len(grad_input) == 1
-        vis.add_entry(plot.plot(grad_input[0].detach().flatten().cpu().numpy())[0], f"Gradients of {name} with alpha {alpha}")
+        vis.add_entry(
+            plot.plot(grad_input[0].detach().flatten().cpu().numpy())[0],
+            f"Gradients of {name} with alpha {alpha}")
         if module in hooks:
           hooks[module].remove()
           hooks.pop(module)
+
       return hook
 
     i = 1
     for module in model.modules():
       if isinstance(module, PpcCell):
-        ops: PartialMixedOp = module._ops[0]
+        ops: PartialMixedOp = module._ops[0]  # type: ignore
         preprocessor = module.preprocess0
         hooks[preprocessor] = preprocessor.register_full_backward_hook(create_preprocessor_hook(i))
-        for idx,op in enumerate(ops._ops):
-          hooks[op]  = op.register_full_backward_hook(create_op_hook(ops.alphas[idx]))
+        for idx, op in enumerate(ops._ops):
+          if ops.alphas is not None:
+            hooks[op] = op.register_full_backward_hook(create_op_hook(ops.alphas[idx]))
         i += 1
 
     loss = model._loss(input, target)

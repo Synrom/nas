@@ -34,6 +34,7 @@ def parse_args() -> EvalConfig:
   parser.add_argument('--cutout_length', type=int, default=16, help='cutout length')
   parser.add_argument('--auxiliary', action='store_true', default=False, help='use auxiliary tower')
   parser.add_argument('--auxiliary_weight', type=float, default=0.4, help='weight for auxiliary loss')
+  parser.add_argument('--dropout', type=float, default=0.5, help='Dropout')
   parser.add_argument('--drop_path_prob', type=float, default=0.3, help='drop path probability')
   parser.add_argument('--seed', type=int, default=0, help='random seed')
   parser.add_argument('--genotype', type=str, help='Path to genotype')
@@ -204,7 +205,7 @@ if __name__ == "__main__":
   else:
     start_epoch = 0
     model = NetworkCIFAR(config.init_channels, CIFAR_CLASSES, config.layers, genotype, device,
-                         config.drop_path_prob, config.auxiliary)
+                         config.drop_path_prob, config.auxiliary, config.dropout)
     optimizer = torch.optim.SGD(model.parameters(),
                                 config.learning_rate,
                                 momentum=config.momentum,
@@ -258,6 +259,7 @@ if __name__ == "__main__":
       stop = True
 
     if stop or visualize or epoch == config.epochs - 1:
+      monitor.reset_hook()
       model_checkpoint_path = f"{config.logdir}/{config.runid}/checkpoint-{epoch}-epochs.pkl"
       model.save_to_file(Path(model_checkpoint_path))
       optimizer_checkpoint_path = f"{config.logdir}/{config.runid}/optimizer.pkl"
