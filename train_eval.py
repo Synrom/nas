@@ -247,7 +247,7 @@ if __name__ == "__main__":
       monitor.input_dependent_baseline(model, criterion)
     if config.vis_lrs:
       monitor.visualize_lrs(scheduler.get_lr()[0])
-    if visualize:
+    if epoch % 100 == 0 and epoch != 0:
       monitor.smoothed_training_loss.add_marker(f"Epoch {epoch}")
       monitor.training_loss.add_marker(f"Epoch {epoch}")
 
