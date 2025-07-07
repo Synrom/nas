@@ -90,20 +90,21 @@ class AuxiliaryHeadCIFAR(nn.Module):
     """assuming input size 8x8"""
     super(AuxiliaryHeadCIFAR, self).__init__()
     self.features = nn.Sequential(
-        nn.ReLU(inplace=True),
+        nn.ReLU(inplace=False),
         nn.AvgPool2d(5, stride=3, padding=0, count_include_pad=False),  # image size = 2 x 2
         nn.Conv2d(C, 128, 1, bias=False),
         nn.BatchNorm2d(128),
-        nn.ReLU(inplace=True),
+        nn.ReLU(inplace=False),
         nn.Conv2d(128, 768, 2, bias=False),
         nn.BatchNorm2d(768),
-        nn.ReLU(inplace=True),
+        nn.ReLU(inplace=False),
     )
     self.classifier = nn.Linear(768, num_classes)
 
   def forward(self, x):
     x = self.features(x)
-    x = self.classifier(x.view(x.size(0), -1))
+    x = x.flatten(start_dim=1)
+    x = self.classifier(x)
     return x
 
 
@@ -175,7 +176,7 @@ class NetworkCIFAR(nn.Module):
 
     # classifier
     out = self.global_pooling(s1)
-    out = out.view(out.size(0), -1)
+    out = out.flatten(start_dim=1)
     out = self.dropout(out)
     logits = self.classifier(out)
     return logits, logits_aux  # type: ignore
