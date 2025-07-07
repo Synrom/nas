@@ -73,7 +73,10 @@ def parse_args() -> PPCSearchConfig:
   add_neglatible_bool_to_parser(parser, "--no-vis-genotypes", "vis_genotypes")
   add_neglatible_bool_to_parser(parser, "--no-vis-lrs", "vis_lrs")
   add_neglatible_bool_to_parser(parser, "--no-vis-eigenvalues", "vis_eigenvalues")
-  parser.add_argument("--vis_mixed_op_grad", action="store_true", dest="vis_mixed_op_grad", default=True)
+  parser.add_argument("--vis_mixed_op_grad",
+                      action="store_true",
+                      dest="vis_mixed_op_grad",
+                      default=True)
   parser.add_argument("--vis_interval",
                       type=int,
                       default=200,
@@ -177,10 +180,7 @@ def train(model: Network,
         assert models_eq(bf_criterion, criterion) == True
         del bf_model
         del bf_criterion
-      
-      if config.vis_mixed_op_grad is True: # change this to be at the start of last epoch
-        monitor.visualize_mixed_op_gradients(model, input_train, target_train, optimizer)
-      
+
     if idx % config.vis_interval == 0:
       monitor.logger.info(f"After {idx} steps of {epoch} epoch {stage} stage: {loss.item()}")
 
@@ -189,6 +189,16 @@ def train(model: Network,
         monitor.visualize_eigenvalues(input_search, target_search, architect)
 
     monitor.add_training_loss(loss.item())
+
+
+def recalibrate_bn(model: Network, loader: DataLoader, steps: int = 200):
+  model.train()
+  with torch.no_grad():
+    for i, (_, input, _) in enumerate(loader):
+      if i >= steps: break
+      input = input.to(model.device)
+      _ = model(input)
+  model.eval()
 
 
 if __name__ == '__main__':
@@ -364,8 +374,8 @@ if __name__ == '__main__':
         validate_model(model, criterion, monitor, valid_queue)
       if config.vis_alphas is True and epoch >= 10:
         monitor.visualize_alphas(
-            F.softmax(model.alphas_normal, dim=1).detach().cpu().numpy(),
-            F.softmax(model.alphas_reduce, dim=1).detach().cpu().numpy(), model)
+            F.softmax(model.alphas_normal, dim=-1).detach().cpu().numpy(),
+            F.softmax(model.alphas_reduce, dim=-1).detach().cpu().numpy(), model)
       if config.vis_genotypes is True and epoch >= 10:
         monitor.visualize_genotypes(model.genotype())
       if config.vis_lrs:
@@ -416,7 +426,7 @@ if __name__ == '__main__':
         exit()
 
     if stage_idx + 1 < len(stages):
-      monitor.reset_hook(model, architect)
+      monitor.reset_hook()
       stage = stages[stage_idx + 1]
       model = model.transfer_to_stage(stage, stage_idx == len(stages) - 2)
       optimizer = torch.optim.SGD(model.parameters(),
@@ -431,6 +441,9 @@ if __name__ == '__main__':
                                          betas=(0.5, 0.999),
                                          weight_decay=config.arch_weight_decay)
       architect = Architect(model, config, alpha_optimizer)
+      if stage_idx == len(stages) - 2:
+        monitor.logger.info("Recalibrate Batch Norm for stage 2")
+        recalibrate_bn(model, valid_queue, 200)
       monitor.next_stage(model, stage)
     else:
       monitor.commit()

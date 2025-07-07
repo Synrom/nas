@@ -277,7 +277,7 @@ class Network(nn.Module):
         Create genotype that describes learned network with only the top-2 edges going into a node.
         """
 
-    def _parse(weights: ndarray) -> list[tuple[str, int]]:
+    def _parse(weights: ndarray, switch: Switch) -> list[tuple[str, int]]:
       """
             Given weights, select best two edges with one opeartion per edge.
             Return Genotype.normal from that.
@@ -297,26 +297,27 @@ class Network(nn.Module):
         # in the end return idxs of two edges with highest such value
         edges = sorted(range(i + 2),
                        key=lambda x: -max(W[x][k] for k in range(len(W[x]))
-                                          if k != PRIMITIVES.index("none")))[:2]
+                                          if alpha_idx_to_switch_idx(switch[i+2][x], k) != PRIMITIVES.index("none")))[:2]
 
         # iterate over selected edges
         for j in edges:
           k_best = None
+          activations: list[bool] = switch[i+2][j]
 
           # iterate over operations on edge j and select highest
           for k in range(len(W[j])):
-            if k != PRIMITIVES.index("none"):
+            if alpha_idx_to_switch_idx(activations, k) != PRIMITIVES.index("none"):
               if k_best is None or W[j][k] > W[j][k_best]:
                 k_best = k
 
           # primitives[k_best] gives us the best operation along edge j
-          gene.append((PRIMITIVES[k_best], j))  # type: ignore
+          gene.append((PRIMITIVES[alpha_idx_to_switch_idx(activations, k_best)], j))  # type: ignore
         start = end
         n += 1
       return gene
 
-    gene_normal = _parse(F.softmax(self.alphas_normal, dim=-1).data.cpu().numpy())
-    gene_reduce = _parse(F.softmax(self.alphas_reduce, dim=-1).data.cpu().numpy())
+    gene_normal = _parse(F.softmax(self.alphas_normal, dim=-1).data.cpu().numpy(), self._switch_normal)
+    gene_reduce = _parse(F.softmax(self.alphas_reduce, dim=-1).data.cpu().numpy(), self._switch_reduce)
 
     # result of node are the concats of the last k-nodes where k=self._multiplier
     concat = list(range(2 + self._steps - self._multiplier, self._steps + 2))

@@ -115,7 +115,7 @@ class NetworkCIFAR(nn.Module):
     """
 
   def __init__(self, C: int, num_classes: int, layers: int, genotype: Genotype, device: torch.device,
-               drop_path_prob: float, auxiliary: bool):
+               drop_path_prob: float, auxiliary: bool, dropout: float):
     super(NetworkCIFAR, self).__init__()
     self._layers = layers
     self._genotype = genotype
@@ -123,6 +123,7 @@ class NetworkCIFAR(nn.Module):
     self._num_classes = num_classes
     self._steps = len(genotype.normal) // 2
     self._auxilary = auxiliary
+    self._dropout_prob = dropout
     self.device = device
 
     stem_multiplier = 3
@@ -157,6 +158,7 @@ class NetworkCIFAR(nn.Module):
       self.auxiliary_head = AuxiliaryHeadCIFAR(C_to_auxiliary, num_classes)
 
     self.global_pooling = nn.AdaptiveAvgPool2d(1)
+    self.dropout = nn.Dropout(dropout)
     self.classifier = nn.Linear(C_prev, num_classes)
 
   def forward(self, input: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -173,7 +175,9 @@ class NetworkCIFAR(nn.Module):
 
     # classifier
     out = self.global_pooling(s1)
-    logits = self.classifier(out.view(out.size(0), -1))
+    out = out.view(out.size(0), -1)
+    out = self.dropout(out)
+    logits = self.classifier(out)
     return logits, logits_aux  # type: ignore
 
   def save_to_file(self, path: Path):
@@ -191,7 +195,7 @@ class NetworkCIFAR(nn.Module):
 
   def clone(self) -> NetworkCIFAR:
     model_new = NetworkCIFAR(self._C, self._num_classes, self._layers, self._genotype, self.device,
-                             self.drop_path_prob, self._auxilary).to(self.device)
+                             self.drop_path_prob, self._auxilary, self._dropout_prob).to(self.device)
     for x, y in zip(model_new.parameters(), self.parameters()):
       x.data.copy_(y.data)
     return model_new
