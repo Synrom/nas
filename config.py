@@ -138,4 +138,5 @@ class PPCSearchConfig:
   past_train: str | None = None
   steps: int = 4
   vis_se_block: bool = True
-  vis_mixed_op_grad: bool = False
+  fair: bool = False
+  aux_loss_weight: float = 10.0

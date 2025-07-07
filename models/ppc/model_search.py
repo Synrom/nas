@@ -107,6 +107,7 @@ class Network(nn.Module):
       steps: int,
       multiplier: int,
       stem_multiplier: int,
+      fair: bool,
   ):
     """
         Args:
@@ -132,6 +133,7 @@ class Network(nn.Module):
     self._switch_reduce = switch_reduce
     self._dropout_rate = dropout_rate
     self._stem_multiplier = stem_multiplier
+    self._fair = fair
     self.device = device
 
     C_curr = stem_multiplier * C
@@ -177,10 +179,23 @@ class Network(nn.Module):
                         self._num_ops,
                         multiplier=self._multiplier,
                         stem_multiplier=self._stem_multiplier,
-                        steps=self._steps).to(self.device)
+                        steps=self._steps,
+                        fair=self._fair).to(self.device)
     for x, y in zip(model_new.arch_parameters(), self.arch_parameters()):
       x.data.copy_(y.data)
     return model_new
+
+  def normal_weights(self) -> torch.Tensor:
+    if self._fair is False:
+      return F.softmax(self.alphas_normal, dim=-1)
+    else:
+      return F.sigmoid(self.alphas_normal)
+
+  def reduce_weights(self) -> torch.Tensor:
+    if self._fair is False:
+      return F.softmax(self.alphas_reduce, dim=-1)
+    else:
+      return F.sigmoid(self.alphas_reduce)
 
   def clone(self) -> Network:
     """
@@ -199,16 +214,16 @@ class Network(nn.Module):
     for i, cell in enumerate(self.cells):
 
       if cell.reduction:
-        weights = F.softmax(self.alphas_reduce, dim=-1)
+        weights = self.reduce_weights()
       else:
-        weights = F.softmax(self.alphas_normal, dim=-1)
+        weights = self.normal_weights()
 
       # input to cell is output from last two cells
       s0, s1 = s1, cell(s0, s1, weights)
 
     # classifier
     out = self.global_pooling(s1)
-    out = out.view(out.size(0), -1)
+    out = out.flatten(start_dim=1)
     out = self.dropout(out)
     logits = self.classifier(out)
     return logits
@@ -227,8 +242,14 @@ class Network(nn.Module):
     num_ops = self._num_ops
 
     # for each edge, get num_ops weights from Norm[0,1]
-    self.alphas_normal = Variable(1e-3 * torch.randn(k, num_ops).to(self.device), requires_grad=True)
-    self.alphas_reduce = Variable(1e-3 * torch.randn(k, num_ops).to(self.device), requires_grad=True)
+    if self._fair is False:
+      self.alphas_normal = Variable(1e-3 * torch.randn(k, num_ops).to(self.device),
+                                    requires_grad=True)
+      self.alphas_reduce = Variable(1e-3 * torch.randn(k, num_ops).to(self.device),
+                                    requires_grad=True)
+    else:
+      self.alphas_normal = Variable(torch.zeros(k, num_ops).to(self.device), requires_grad=True)
+      self.alphas_reduce = Variable(torch.zeros(k, num_ops).to(self.device), requires_grad=True)
     self._arch_parameters = [
         self.alphas_normal,
         self.alphas_reduce,
@@ -249,7 +270,8 @@ class Network(nn.Module):
                     channel_sampling_prob=stage.channel_sampling_prob,
                     dropout_rate=stage.dropout,
                     stem_multiplier=self._stem_multiplier,
-                    multiplier=self._multiplier)
+                    multiplier=self._multiplier,
+                    fair=self._fair)
     model.to(self.device)
 
     #offset = 0
@@ -296,13 +318,14 @@ class Network(nn.Module):
         # for each edge, look at maximal alpha value of any operation
         # in the end return idxs of two edges with highest such value
         edges = sorted(range(i + 2),
-                       key=lambda x: -max(W[x][k] for k in range(len(W[x]))
-                                          if alpha_idx_to_switch_idx(switch[i+2][x], k) != PRIMITIVES.index("none")))[:2]
+                       key=lambda x: -max(W[x][k]
+                                          for k in range(len(W[x])) if alpha_idx_to_switch_idx(
+                                              switch[i + 2][x], k) != PRIMITIVES.index("none")))[:2]
 
         # iterate over selected edges
         for j in edges:
           k_best = None
-          activations: list[bool] = switch[i+2][j]
+          activations: list[bool] = switch[i + 2][j]
 
           # iterate over operations on edge j and select highest
           for k in range(len(W[j])):
@@ -316,8 +339,8 @@ class Network(nn.Module):
         n += 1
       return gene
 
-    gene_normal = _parse(F.softmax(self.alphas_normal, dim=-1).data.cpu().numpy(), self._switch_normal)
-    gene_reduce = _parse(F.softmax(self.alphas_reduce, dim=-1).data.cpu().numpy(), self._switch_reduce)
+    gene_normal = _parse(self.normal_weights().data.cpu().numpy(), self._switch_normal)
+    gene_reduce = _parse(self.reduce_weights().data.cpu().numpy(), self._switch_reduce)
 
     # result of node are the concats of the last k-nodes where k=self._multiplier
     concat = list(range(2 + self._steps - self._multiplier, self._steps + 2))

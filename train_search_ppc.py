@@ -73,10 +73,7 @@ def parse_args() -> PPCSearchConfig:
   add_neglatible_bool_to_parser(parser, "--no-vis-genotypes", "vis_genotypes")
   add_neglatible_bool_to_parser(parser, "--no-vis-lrs", "vis_lrs")
   add_neglatible_bool_to_parser(parser, "--no-vis-eigenvalues", "vis_eigenvalues")
-  parser.add_argument("--vis_mixed_op_grad",
-                      action="store_true",
-                      dest="vis_mixed_op_grad",
-                      default=True)
+  parser.add_argument("--fair", action="store_true", dest="fair", default=False)
   parser.add_argument("--vis_interval",
                       type=int,
                       default=200,
@@ -314,7 +311,8 @@ if __name__ == '__main__':
                     channel_sampling_prob=stage.channel_sampling_prob,
                     dropout_rate=stage.dropout,
                     multiplier=config.steps,
-                    stem_multiplier=4)
+                    stem_multiplier=4,
+                    fair=config.fair)
     optimizer = torch.optim.SGD(model.parameters(),
                                 config.learning_rate,
                                 momentum=config.momentum,
@@ -363,6 +361,11 @@ if __name__ == '__main__':
             stage_idx,
             train_alphas=epoch >= 10)
 
+      # recalibrate BN
+      if stage.dropout >= 0.7:
+        monitor.logger.info("Recalibrating Batch-Norm")
+        recalibrate_bn(model, valid_queue, 50)
+
       # visualize everything
       visualize = epoch % config.vis_epoch_interval == 0
       model.eval()
@@ -372,10 +375,9 @@ if __name__ == '__main__':
         monitor.eval_test_batch(f"At stage {stage_idx} and epoch {epoch}", model)
       if config.live_validate is True:
         validate_model(model, criterion, monitor, valid_queue)
-      if config.vis_alphas is True and epoch >= 10:
-        monitor.visualize_alphas(
-            F.softmax(model.alphas_normal, dim=-1).detach().cpu().numpy(),
-            F.softmax(model.alphas_reduce, dim=-1).detach().cpu().numpy(), model)
+      if config.vis_alphas is True:  # and epoch >= 10:
+        monitor.visualize_alphas(model.normal_weights().detach().cpu().numpy(),
+                                 model.reduce_weights().detach().cpu().numpy(), model)
       if config.vis_genotypes is True and epoch >= 10:
         monitor.visualize_genotypes(model.genotype())
       if config.vis_lrs:
