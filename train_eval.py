@@ -40,6 +40,7 @@ def parse_args() -> EvalConfig:
   parser.add_argument('--genotype', type=str, help='Path to genotype')
   parser.add_argument('--grad_clip', type=float, default=5, help='gradient clipping')
   parser.add_argument("--data_num_workers", type=int, default=2, help="num workers of data loaders")
+  parser.add_argument("--hours", type=int, default=24, help="Number of hours per job", dest="time_hours")
   add_neglatible_bool_to_parser(parser, "--no-vis-acts-and-grads", "vis_activations_and_gradients")
   parser.add_argument("--debug", action="store_true", dest="debug")
   parser.set_defaults(debug=False)
@@ -55,6 +56,7 @@ def parse_args() -> EvalConfig:
                       help="Interval to visualize training loss")
   add_neglatible_bool_to_parser(parser, "--no-live-validate", "live_validate")
   add_neglatible_bool_to_parser(parser, "--no-vis-lrs", "vis_lrs")
+  parser.add_argument("--gelu", action="store_true", dest="gelu")
   parser.add_argument("--past_train", type=str, default=None, help="Optional path to previous train.")
 
   args = parser.parse_args()
@@ -205,7 +207,7 @@ if __name__ == "__main__":
   else:
     start_epoch = 0
     model = NetworkCIFAR(config.init_channels, CIFAR_CLASSES, config.layers, genotype, device,
-                         config.drop_path_prob, config.auxiliary, config.dropout)
+                         config.drop_path_prob, config.auxiliary, config.dropout, config.gelu)
     optimizer = torch.optim.SGD(model.parameters(),
                                 config.learning_rate,
                                 momentum=config.momentum,
@@ -254,11 +256,11 @@ if __name__ == "__main__":
 
     stop = False
     current_time = time.time()
-    if current_time - start_time >= 60 * 45:  # stop after 45 mins
-      monitor.logger.info("Restart after half an hour")
+    if current_time - start_time >= config.time_hours * 60 * 60:
+      monitor.logger.info(f"Restart after {config.time_hours} hours")
       stop = True
 
-    if stop or visualize or epoch == config.epochs - 1:
+    if stop or (epoch % 100 == 0) or epoch == config.epochs - 1:
       monitor.reset_hook()
       model_checkpoint_path = f"{config.logdir}/{config.runid}/checkpoint-{epoch}-epochs.pkl"
       model.save_to_file(Path(model_checkpoint_path))

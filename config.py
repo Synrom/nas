@@ -91,6 +91,8 @@ class EvalConfig:
   auxiliary: bool = False
   auxiliary_weight: float = 0.4
   dropout: float = 0.5
+  time_hours: int = 24
+  gelu: bool = False
 
 
 def add_neglatible_bool_to_parser(parser: argparse.ArgumentParser, cmd: str, name: str):

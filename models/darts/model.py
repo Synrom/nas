@@ -24,6 +24,7 @@ class Cell(nn.Module):
       reduction: bool,
       reduction_prev: bool,
       device: torch.device,
+      gelu: bool,
   ):
     super(Cell, self).__init__()
 
@@ -116,7 +117,7 @@ class NetworkCIFAR(nn.Module):
     """
 
   def __init__(self, C: int, num_classes: int, layers: int, genotype: Genotype, device: torch.device,
-               drop_path_prob: float, auxiliary: bool, dropout: float):
+               drop_path_prob: float, auxiliary: bool, dropout: float, gelu: bool):
     super(NetworkCIFAR, self).__init__()
     self._layers = layers
     self._genotype = genotype
@@ -125,6 +126,7 @@ class NetworkCIFAR(nn.Module):
     self._steps = len(genotype.normal) // 2
     self._auxilary = auxiliary
     self._dropout_prob = dropout
+    self._gelu = gelu
     self.device = device
 
     stem_multiplier = 3
