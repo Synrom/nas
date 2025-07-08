@@ -19,7 +19,7 @@ class Cell(nn.Module):
 
   def __init__(self, steps: int, multiplier: int, C_prev_prev: int, C_prev: int, C: int,
                reduction: bool, reduction_prev: bool, switch: Switch, channel_sampling_prob: float,
-               reduction_ratio: int):
+               reduction_ratio: int, gelu: bool):
     """
         Args:
           steps: number of intermediate nodes
@@ -37,10 +37,10 @@ class Cell(nn.Module):
     self.reduction = reduction
 
     if reduction_prev:
-      self.preprocess0: nn.Module = FactorizedReduce(C_prev_prev, C, affine=False)
+      self.preprocess0: nn.Module = FactorizedReduce(C_prev_prev, C, gelu=gelu, affine=False)
     else:
-      self.preprocess0 = ReLUConvBN(C_prev_prev, C, 1, 1, 0, affine=False)
-    self.preprocess1 = ReLUConvBN(C_prev, C, 1, 1, 0, affine=False)
+      self.preprocess0 = ReLUConvBN(C_prev_prev, C, 1, 1, 0, gelu=gelu, affine=False)
+    self.preprocess1 = ReLUConvBN(C_prev, C, 1, 1, 0, gelu=gelu, affine=False)
     self._steps = steps
     self._multiplier = multiplier
 
@@ -54,9 +54,9 @@ class Cell(nn.Module):
         stride = 2 if reduction and j < 2 else 1
 
         # for each input node, add an edge
-        op = PartialMixedOp(C, stride, channel_sampling_prob, switch[i + 2][j])
+        op = PartialMixedOp(C, stride, channel_sampling_prob, switch[i + 2][j], gelu)
         self._ops.append(op)
-      self._attns.append(SEBlock(C, reduction_ratio))
+      self._attns.append(SEBlock(C, reduction_ratio, gelu))
 
   def forward(self, s0: torch.Tensor, s1: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
     """
@@ -107,6 +107,7 @@ class Network(nn.Module):
       steps: int,
       multiplier: int,
       stem_multiplier: int,
+      gelu: bool,
       fair: bool,
   ):
     """
@@ -133,6 +134,7 @@ class Network(nn.Module):
     self._switch_reduce = switch_reduce
     self._dropout_rate = dropout_rate
     self._stem_multiplier = stem_multiplier
+    self._gelu = gelu
     self._fair = fair
     self.device = device
 
@@ -147,11 +149,11 @@ class Network(nn.Module):
         C_curr *= 2
         reduction = True
         cell = Cell(steps, multiplier, C_prev_prev, C_prev, C_curr, reduction, reduction_prev,
-                    switch_reduce, channel_sampling_prob, reduction_ratio)
+                    switch_reduce, channel_sampling_prob, reduction_ratio, gelu)
       else:
         reduction = False
         cell = Cell(steps, multiplier, C_prev_prev, C_prev, C_curr, reduction, reduction_prev,
-                    switch_normal, channel_sampling_prob, reduction_ratio)
+                    switch_normal, channel_sampling_prob, reduction_ratio, gelu)
       reduction_prev = reduction
       self.cells += [cell]
       C_prev_prev, C_prev = C_prev, multiplier * C_curr
@@ -180,7 +182,8 @@ class Network(nn.Module):
                         multiplier=self._multiplier,
                         stem_multiplier=self._stem_multiplier,
                         steps=self._steps,
-                        fair=self._fair).to(self.device)
+                        fair=self._fair,
+                        gelu=self._gelu).to(self.device)
     for x, y in zip(model_new.arch_parameters(), self.arch_parameters()):
       x.data.copy_(y.data)
     return model_new
@@ -271,7 +274,8 @@ class Network(nn.Module):
                     dropout_rate=stage.dropout,
                     stem_multiplier=self._stem_multiplier,
                     multiplier=self._multiplier,
-                    fair=self._fair)
+                    fair=self._fair,
+                    gelu=self._gelu)
     model.to(self.device)
 
     #offset = 0

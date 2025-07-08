@@ -17,11 +17,11 @@ class MixedOp(nn.Module):
     MixedOp is the weighted sum of possible operations.
     """
 
-  def __init__(self, C: int, stride: int):
+  def __init__(self, C: int, stride: int, gelu: bool):
     super(MixedOp, self).__init__()
     self._ops = nn.ModuleList()
     for primitive in PRIMITIVES:
-      op = OPS[primitive](C, stride, False)
+      op = OPS[primitive](C, stride, False, gelu)
       if "pool" in primitive:
         op = nn.Sequential(op, nn.BatchNorm2d(C, affine=False))
       self._ops.append(op)
@@ -39,7 +39,7 @@ class MixedOp(nn.Module):
 class Cell(nn.Module):
 
   def __init__(self, steps: int, multiplier: int, C_prev_prev: int, C_prev: int, C: int,
-               reduction: bool, reduction_prev: bool):
+               reduction: bool, reduction_prev: bool, gelu: bool):
     """
         Args:
           steps: number of intermediate nodes
@@ -55,10 +55,10 @@ class Cell(nn.Module):
     self.reduction = reduction
 
     if reduction_prev:
-      self.preprocess0: nn.Module = FactorizedReduce(C_prev_prev, C, affine=False)
+      self.preprocess0: nn.Module = FactorizedReduce(C_prev_prev, C, affine=False, gelu=gelu)
     else:
-      self.preprocess0 = ReLUConvBN(C_prev_prev, C, 1, 1, 0, affine=False)
-    self.preprocess1 = ReLUConvBN(C_prev, C, 1, 1, 0, affine=False)
+      self.preprocess0 = ReLUConvBN(C_prev_prev, C, 1, 1, 0, affine=False, gelu=gelu)
+    self.preprocess1 = ReLUConvBN(C_prev, C, 1, 1, 0, affine=False, gelu=gelu)
     self._steps = steps
     self._multiplier = multiplier
 
@@ -71,7 +71,7 @@ class Cell(nn.Module):
         stride = 2 if reduction and j < 2 else 1
 
         # for each input node, add an edge
-        op = MixedOp(C, stride)
+        op = MixedOp(C, stride, gelu=gelu)
         self._ops.append(op)
 
   def forward(self, s0: torch.Tensor, s1: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
@@ -113,6 +113,7 @@ class Network(nn.Module):
       layers: int,
       criterion: nn.Module,
       device: torch.device,
+      gelu: bool,
       steps: int = 4,
       multiplier: int = 4,
       stem_multiplier: int = 3,
@@ -129,6 +130,7 @@ class Network(nn.Module):
           stem_multiplier: C*stem_multiplier output channels after preprocessing
         """
     super(Network, self).__init__()
+    self._gelu = gelu
     self._C = C
     self._num_classes = num_classes
     self._layers = layers
@@ -150,7 +152,7 @@ class Network(nn.Module):
         reduction = True
       else:
         reduction = False
-      cell = Cell(steps, multiplier, C_prev_prev, C_prev, C_curr, reduction, reduction_prev)
+      cell = Cell(steps, multiplier, C_prev_prev, C_prev, C_curr, reduction, reduction_prev, gelu)
       reduction_prev = reduction
       self.cells += [cell]
       C_prev_prev, C_prev = C_prev, multiplier * C_curr
@@ -164,8 +166,12 @@ class Network(nn.Module):
     """
         Inits a new Network with the same structure and alphas as self, but new modules.
         """
-    model_new = Network(self._C, self._num_classes, self._layers, self._criterion,
-                        self.device).to(self.device)
+    model_new = Network(self._C,
+                        self._num_classes,
+                        self._layers,
+                        self._criterion,
+                        self.device,
+                        gelu=self._gelu).to(self.device)
     for x, y in zip(model_new.arch_parameters(), self.arch_parameters()):
       x.data.copy_(y.data)
     return model_new

@@ -56,6 +56,7 @@ class DartsSearchConfig:
   vis_lrs: bool = True
   vis_eigenvalues: bool = True
   past_train: str | None = None
+  gelu: bool = False
 
 
 @dataclass
@@ -142,3 +143,4 @@ class PPCSearchConfig:
   vis_se_block: bool = True
   fair: bool = False
   aux_loss_weight: float = 10.0
+  gelu: bool = False

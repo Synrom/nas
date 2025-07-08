@@ -74,6 +74,7 @@ def parse_args() -> PPCSearchConfig:
   add_neglatible_bool_to_parser(parser, "--no-vis-lrs", "vis_lrs")
   add_neglatible_bool_to_parser(parser, "--no-vis-eigenvalues", "vis_eigenvalues")
   parser.add_argument("--fair", action="store_true", dest="fair", default=False)
+  parser.add_argument("--gelu", action="store_true", dest="gelu", default=False)
   parser.add_argument("--vis_interval",
                       type=int,
                       default=200,
@@ -312,7 +313,8 @@ if __name__ == '__main__':
                     dropout_rate=stage.dropout,
                     multiplier=config.steps,
                     stem_multiplier=4,
-                    fair=config.fair)
+                    fair=config.fair,
+                    gelu=config.gelu)
     optimizer = torch.optim.SGD(model.parameters(),
                                 config.learning_rate,
                                 momentum=config.momentum,

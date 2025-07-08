@@ -40,7 +40,11 @@ def parse_args() -> EvalConfig:
   parser.add_argument('--genotype', type=str, help='Path to genotype')
   parser.add_argument('--grad_clip', type=float, default=5, help='gradient clipping')
   parser.add_argument("--data_num_workers", type=int, default=2, help="num workers of data loaders")
-  parser.add_argument("--hours", type=int, default=24, help="Number of hours per job", dest="time_hours")
+  parser.add_argument("--hours",
+                      type=int,
+                      default=24,
+                      help="Number of hours per job",
+                      dest="time_hours")
   add_neglatible_bool_to_parser(parser, "--no-vis-acts-and-grads", "vis_activations_and_gradients")
   parser.add_argument("--debug", action="store_true", dest="debug")
   parser.set_defaults(debug=False)

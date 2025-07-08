@@ -264,7 +264,7 @@ if __name__ == '__main__':
       alpha_optimizer.load_state_dict(scheduler_states["alpha_optimizer_state"])
   else:
     start_epoch = 0
-    model = Network(config.init_channels, 10, config.layers, criterion, device)
+    model = Network(config.init_channels, 10, config.layers, criterion, device, gelu=config.gelu)
     optimizer = torch.optim.SGD(model.parameters(),
                                 config.learning_rate,
                                 momentum=config.momentum,

@@ -29,10 +29,12 @@ class Cell(nn.Module):
     super(Cell, self).__init__()
 
     if reduction_prev:
-      self.preprocess0: nn.Module = FactorizedReduce(C_prev_prev, C)
+      self.preprocess0: nn.Module = FactorizedReduce(C_prev_prev, C, gelu)
     else:
-      self.preprocess0 = ReLUConvBN(C_prev_prev, C, 1, 1, 0)
-    self.preprocess1 = ReLUConvBN(C_prev, C, 1, 1, 0)
+      self.preprocess0 = ReLUConvBN(C_prev_prev, C, 1, 1, 0, gelu)
+    self.preprocess1 = ReLUConvBN(C_prev, C, 1, 1, 0, gelu)
+
+    self._gelu = gelu
 
     op_names: tuple[str]
     indices: tuple[int]
@@ -55,7 +57,7 @@ class Cell(nn.Module):
     self._ops = nn.ModuleList()
     for name, index in zip(op_names, indices):
       stride = 2 if reduction and index < 2 else 1
-      op = OPS[name](C, stride, True)
+      op = OPS[name](C, stride, True, self._gelu)
       self._ops += [op]
     self._indices = indices
 
@@ -87,18 +89,18 @@ class AuxiliaryHeadCIFAR(nn.Module):
     It's a classifier based on the intermediate representation after 2/3-th layer.
     """
 
-  def __init__(self, C, num_classes):
+  def __init__(self, C, num_classes, gelu: bool):
     """assuming input size 8x8"""
     super(AuxiliaryHeadCIFAR, self).__init__()
     self.features = nn.Sequential(
-        nn.ReLU(inplace=False),
+        activatition(gelu),
         nn.AvgPool2d(5, stride=3, padding=0, count_include_pad=False),  # image size = 2 x 2
         nn.Conv2d(C, 128, 1, bias=False),
         nn.BatchNorm2d(128),
-        nn.ReLU(inplace=False),
+        activatition(gelu),
         nn.Conv2d(128, 768, 2, bias=False),
         nn.BatchNorm2d(768),
-        nn.ReLU(inplace=False),
+        activatition(gelu),
     )
     self.classifier = nn.Linear(768, num_classes)
 
@@ -147,7 +149,7 @@ class NetworkCIFAR(nn.Module):
       else:
         reduction = False
 
-      cell = Cell(genotype, C_prev_prev, C_prev, C_curr, reduction, reduction_prev, device)
+      cell = Cell(genotype, C_prev_prev, C_prev, C_curr, reduction, reduction_prev, device, gelu)
       reduction_prev = reduction
       self.cells += [cell]
 
@@ -158,7 +160,7 @@ class NetworkCIFAR(nn.Module):
         C_to_auxiliary = C_prev
 
     if auxiliary:
-      self.auxiliary_head = AuxiliaryHeadCIFAR(C_to_auxiliary, num_classes)
+      self.auxiliary_head = AuxiliaryHeadCIFAR(C_to_auxiliary, num_classes, gelu)
 
     self.global_pooling = nn.AdaptiveAvgPool2d(1)
     self.dropout = nn.Dropout(dropout)
@@ -198,7 +200,8 @@ class NetworkCIFAR(nn.Module):
 
   def clone(self) -> NetworkCIFAR:
     model_new = NetworkCIFAR(self._C, self._num_classes, self._layers, self._genotype, self.device,
-                             self.drop_path_prob, self._auxilary, self._dropout_prob).to(self.device)
+                             self.drop_path_prob, self._auxilary, self._dropout_prob,
+                             self._gelu).to(self.device)
     for x, y in zip(model_new.parameters(), self.parameters()):
       x.data.copy_(y.data)
     return model_new

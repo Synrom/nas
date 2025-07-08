@@ -3,7 +3,7 @@ import torch.nn as nn
 import numpy as np
 
 from models.darts.genotypes import PRIMITIVES
-from models.darts.operations import OPS, ReLUConvBN
+from models.darts.operations import OPS, ReLUConvBN, activatition
 
 
 class PartialMixedOp(nn.Module):
@@ -11,7 +11,7 @@ class PartialMixedOp(nn.Module):
   MixedOp with Partial Connection.
   """
 
-  def __init__(self, C: int, stride: int, prob: float, edge_switch: list[bool]):
+  def __init__(self, C: int, stride: int, prob: float, edge_switch: list[bool], gelu: bool):
     super(PartialMixedOp, self).__init__()
     self._ops = nn.ModuleList()
     self.C_sampled = int(prob * C)
@@ -22,7 +22,7 @@ class PartialMixedOp(nn.Module):
     for primitive, activated in zip(PRIMITIVES, edge_switch):
       if activated is False:
         continue
-      op = OPS[primitive](self.C_sampled, stride, False)
+      op = OPS[primitive](self.C_sampled, stride, False, gelu)
       if "pool" in primitive:
         op = nn.Sequential(op, nn.BatchNorm2d(self.C_sampled, affine=False))
       self._ops.append(op)
@@ -60,7 +60,7 @@ class SEBlock(nn.Module):
   The Attention module used in PPC paper.
   """
 
-  def __init__(self, C: int, reduction_ratio: int):
+  def __init__(self, C: int, reduction_ratio: int, gelu: bool):
     super(SEBlock, self).__init__()
 
     reduced_C = max(1, C // reduction_ratio)
@@ -68,9 +68,9 @@ class SEBlock(nn.Module):
     self.avg_pool = nn.AdaptiveAvgPool2d(1)
 
     self.w1 = nn.Linear(C, reduced_C)
-    self.a1 = nn.ReLU()
+    self.a1 = activatition(gelu)
     self.w2 = nn.Linear(reduced_C, reduced_C)
-    self.a2 = nn.ReLU()
+    self.a2 = activatition(gelu)
     self.w3 = nn.Linear(reduced_C, C)
     self.a3 = nn.Sigmoid()
     self.attn_last: None | np.ndarray = None
