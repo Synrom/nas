@@ -100,6 +100,13 @@ class Monitor:
                  title="Validation Loss",
                  ylabel="Loss",
                  grid=True))
+    self.training_aux_loss = Live(
+        "Training Aux Loss", self.path,
+        TwoLines(label1="Loss",
+                 label2="Aux Loss",
+                 title="Training Aux Loss",
+                 ylabel="Loss",
+                 grid=True))   
     self.valid_acc = Live("Validation Accuracy", self.path,
                           Line(title="Validation accuracy", ylabel="Loss", grid=True))
     self.valid_topk_acc = Live("Validation Top-K Accuracy", self.path,
@@ -138,6 +145,7 @@ class Monitor:
 
   def commit(self):
     self.training_loss.commit()
+    self.training_aux_loss.commit()
     self.smoothed_training_loss.commit()
     self.valid_loss.commit()
     self.valid_acc.commit()
@@ -298,6 +306,9 @@ class Monitor:
       for j in range(1, 4):
         vis.add_entry(plot.plot(data[i, j - 1])[0])
       vis.next_row(None)
+
+  def add_aux_loss(self, raw_loss: float, aux_loss: float):
+    self.training_aux_loss.add(np.array([raw_loss, aux_loss])[:, np.newaxis], axis=1)
 
   def visualize_lrs(self, model_lr: float):
     self.logger.info("Visualize LRs ...")

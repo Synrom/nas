@@ -88,11 +88,15 @@ def parse_args() -> PPCSearchConfig:
 
 
 def validate_model(model: Network, criterion: nn.Module, monitor: Monitor,
-                   valid_queue: DataLoader) -> tuple[float, float, float]:
+                   valid_queue: DataLoader, dropout: float) -> tuple[float, float, float]:
   """
   Run model on valid_queue and report results to monitor.
   """
-  model.eval()
+  if dropout <= 0.5:
+    model.eval()
+  else:
+    monitor.logger.info("Doing validation in training mode")
+    model.train() # for BN
   losses, accs, topk_accs = [], [], []
   monitor.logger.info("Validating model ...")
   with torch.no_grad():
@@ -364,9 +368,9 @@ if __name__ == '__main__':
             train_alphas=epoch >= 10)
 
       # recalibrate BN
-      if stage.dropout >= 0.7:
-        monitor.logger.info("Recalibrating Batch-Norm")
-        recalibrate_bn(model, valid_queue, 50)
+      #if stage.dropout >= 0.7:
+      #  monitor.logger.info("Recalibrating Batch-Norm")
+      #  recalibrate_bn(model, valid_queue, 50)
 
       # visualize everything
       visualize = epoch % config.vis_epoch_interval == 0
@@ -376,8 +380,8 @@ if __name__ == '__main__':
       if config.eval_test_batch is True:
         monitor.eval_test_batch(f"At stage {stage_idx} and epoch {epoch}", model)
       if config.live_validate is True:
-        validate_model(model, criterion, monitor, valid_queue)
-      if config.vis_alphas is True:  # and epoch >= 10:
+        validate_model(model, criterion, monitor, valid_queue, stage.dropout)
+      if config.vis_alphas is True and epoch >= 10:
         monitor.visualize_alphas(model.normal_weights().detach().cpu().numpy(),
                                  model.reduce_weights().detach().cpu().numpy(), model)
       if config.vis_genotypes is True and epoch >= 10:

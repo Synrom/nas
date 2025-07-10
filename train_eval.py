@@ -34,7 +34,7 @@ def parse_args() -> EvalConfig:
   parser.add_argument('--cutout_length', type=int, default=16, help='cutout length')
   parser.add_argument('--auxiliary', action='store_true', default=False, help='use auxiliary tower')
   parser.add_argument('--auxiliary_weight', type=float, default=0.4, help='weight for auxiliary loss')
-  parser.add_argument('--dropout', type=float, default=0.5, help='Dropout')
+  parser.add_argument('--dropout', type=float, default=0.0, help='Dropout')
   parser.add_argument('--drop_path_prob', type=float, default=0.3, help='drop path probability')
   parser.add_argument('--seed', type=int, default=0, help='random seed')
   parser.add_argument('--genotype', type=str, help='Path to genotype')
@@ -80,10 +80,10 @@ def train(train_queue: DataLoader, model: NetworkCIFAR, criterion: nn.Module,
 
     optimizer.zero_grad()
     logits, logits_aux = model(input)
-    loss = criterion(logits, target)
+    raw_loss = criterion(logits, target)
     if config.auxiliary:
       loss_aux = criterion(logits_aux, target)
-      loss += config.auxiliary_weight * loss_aux
+      loss = config.auxiliary_weight * loss_aux + raw_loss
     loss.backward()
     nn.utils.clip_grad_norm_(model.parameters(), config.grad_clip)
     optimizer.step()
@@ -106,6 +106,7 @@ def train(train_queue: DataLoader, model: NetworkCIFAR, criterion: nn.Module,
 
     if step % config.vis_interval == 0:
       monitor.logger.info(f"After {step} steps of {epoch} epoch: {loss.item()}")
+      monitor.add_aux_loss(raw_loss.item(), loss_aux.item())
 
     monitor.add_training_loss(loss.item())
 
@@ -152,6 +153,7 @@ if __name__ == "__main__":
   config = parse_args()
 
   print(f"Torch is available: {torch.cuda.is_available()}")
+  print(f"Running for {config.time_hours} hours")
   if torch.backends.mps.is_available():
     device = torch.device("mps")
     device_str = "mps"
@@ -257,6 +259,7 @@ if __name__ == "__main__":
     if epoch % 100 == 0 and epoch != 0:
       monitor.smoothed_training_loss.add_marker(f"Epoch {epoch}")
       monitor.training_loss.add_marker(f"Epoch {epoch}")
+      monitor.training_aux_loss.add_marker(f"Epoch {epoch}")
 
     stop = False
     current_time = time.time()

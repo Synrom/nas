@@ -370,7 +370,7 @@ class VisAlpha:
         label.set_rotation(45)
         label.set_ha('right')
       #inset.set_yticks([])
-      #inset.set_ylim(0, 1) # uncomment if using softmax again
+      inset.set_ylim(0, 1)
       inset.grid(True, axis='y', linestyle='--', alpha=0.5)
 
     ax.axis("off")
