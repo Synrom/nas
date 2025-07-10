@@ -375,29 +375,31 @@ class Network(nn.Module):
     # switch is a list of list of bools
     switch_normal = init_switch(self._steps, len(PRIMITIVES), False)
     switch_reduce = init_switch(self._steps, len(PRIMITIVES), False)
+    normal_weights = self.normal_weights()
+    reduce_weights = self.reduce_weights()
     idx = 0
     for i in range(2, self._steps + 2):
       for j in range(i):
-        _, topk_idxs = self.alphas_normal[idx].abs().topk(num_ops)
+        _, topk_idxs = normal_weights[idx].abs().topk(num_ops)
         for alpha_idx in topk_idxs:
           switch_idx = alpha_idx_to_switch_idx(self._switch_normal[i][j], alpha_idx)
           if drop_zeroes is False or PRIMITIVES[switch_idx] != "none":
             switch_normal[i][j][switch_idx] = True
           else:
-            alpha_idx = self.alphas_normal[idx].abs().topk(num_ops + 1)[1][-1]
+            alpha_idx = normal_weights[idx].abs().topk(num_ops + 1)[1][-1]
             switch_idx = alpha_idx_to_switch_idx(self._switch_normal[i][j], alpha_idx)
             switch_normal[i][j][switch_idx] = True
         idx += 1
     idx = 0
     for i in range(2, self._steps + 2):
       for j in range(i):
-        _, topk_idxs = self.alphas_reduce[idx].abs().topk(num_ops)
+        _, topk_idxs = reduce_weights[idx].abs().topk(num_ops)
         for alpha_idx in topk_idxs:
           switch_idx = alpha_idx_to_switch_idx(self._switch_reduce[i][j], alpha_idx)
           if drop_zeroes is False or PRIMITIVES[switch_idx] != "none":
             switch_reduce[i][j][switch_idx] = True
           else:
-            alpha_idx = self.alphas_reduce[idx].abs().topk(num_ops + 1)[1][-1]
+            alpha_idx = reduce_weights[idx].abs().topk(num_ops + 1)[1][-1]
             switch_idx = alpha_idx_to_switch_idx(self._switch_reduce[i][j], alpha_idx)
             switch_reduce[i][j][switch_idx] = True
         idx += 1

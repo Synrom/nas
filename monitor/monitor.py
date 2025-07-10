@@ -106,7 +106,7 @@ class Monitor:
                  label2="Aux Loss",
                  title="Training Aux Loss",
                  ylabel="Loss",
-                 grid=True))   
+                 grid=True))
     self.valid_acc = Live("Validation Accuracy", self.path,
                           Line(title="Validation accuracy", ylabel="Loss", grid=True))
     self.valid_topk_acc = Live("Validation Top-K Accuracy", self.path,

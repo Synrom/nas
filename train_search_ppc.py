@@ -87,8 +87,8 @@ def parse_args() -> PPCSearchConfig:
   return PPCSearchConfig(**vars(args))
 
 
-def validate_model(model: Network, criterion: nn.Module, monitor: Monitor,
-                   valid_queue: DataLoader, dropout: float) -> tuple[float, float, float]:
+def validate_model(model: Network, criterion: nn.Module, monitor: Monitor, valid_queue: DataLoader,
+                   dropout: float) -> tuple[float, float, float]:
   """
   Run model on valid_queue and report results to monitor.
   """
@@ -96,7 +96,7 @@ def validate_model(model: Network, criterion: nn.Module, monitor: Monitor,
     model.eval()
   else:
     monitor.logger.info("Doing validation in training mode")
-    model.train() # for BN
+    model.train()  # for BN
   losses, accs, topk_accs = [], [], []
   monitor.logger.info("Validating model ...")
   with torch.no_grad():
