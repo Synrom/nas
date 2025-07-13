@@ -9,8 +9,8 @@ import torch.nn as nn
 from torchvision import transforms
 from dataset.transform import Cutout
 import torch.backends.cudnn as cudnn
-from dataset.cifar import cifar10_means, cifar10_stds
-from dataset.wrapper import cifar10
+from dataset.cifar import data_transforms_cifar, cifar10_label2name, cifar100_label2name
+from dataset.wrapper import cifar
 from torch.utils.data import DataLoader
 
 from models.darts.genotypes import load_genotype
@@ -62,12 +62,10 @@ def parse_args() -> EvalConfig:
   add_neglatible_bool_to_parser(parser, "--no-vis-lrs", "vis_lrs")
   parser.add_argument("--gelu", action="store_true", dest="gelu")
   parser.add_argument("--past_train", type=str, default=None, help="Optional path to previous train.")
+  parser.add_argument('--cifar100', action='store_true', default=False, help='if use cifar100')
 
   args = parser.parse_args()
   return EvalConfig(**vars(args))
-
-
-CIFAR_CLASSES = 10
 
 
 def train(train_queue: DataLoader, model: NetworkCIFAR, criterion: nn.Module,
@@ -152,6 +150,11 @@ if __name__ == "__main__":
 
   config = parse_args()
 
+  if config.cifar100:
+    CIFAR_CLASSES = 100
+  else:
+    CIFAR_CLASSES = 10
+
   print(f"Torch is available: {torch.cuda.is_available()}")
   print(f"Running for {config.time_hours} hours")
   if torch.backends.mps.is_available():
@@ -165,21 +168,13 @@ if __name__ == "__main__":
   cudnn.benchmark = True
   cudnn.enabled = True
 
-  train_transform = transforms.Compose([
-      transforms.RandomCrop(32, padding=4),
-      transforms.RandomHorizontalFlip(),
-      transforms.ToTensor(),
-      transforms.Normalize(mean=cifar10_means, std=cifar10_stds),
-  ])
-  if config.cutout:
-    train_transform.transforms.append(Cutout(config.cutout_length))
+  train_transform, eval_transform = data_transforms_cifar(config)
 
-  eval_transform = transforms.Compose(
-      [transforms.ToTensor(),
-       transforms.Normalize(mean=cifar10_means, std=cifar10_stds)])
-
-  train_dataset = cifar10(train=True, transform=train_transform, download=True)
-  test_dataset = cifar10(train=False, transform=eval_transform, download=True)
+  train_dataset = cifar(train=True,
+                        transform=train_transform,
+                        download=True,
+                        cifar100=config.cifar100)
+  test_dataset = cifar(train=False, transform=eval_transform, download=True, cifar100=config.cifar100)
 
   train_queue = DataLoader(train_dataset,
                            batch_size=config.batch_size,
@@ -235,6 +230,7 @@ if __name__ == "__main__":
                     logdir=config.logdir,
                     vis_interval=config.vis_interval,
                     vis_acts_and_grads=config.vis_activations_and_gradients,
+                    label2name=cifar100_label2name if config.cifar100 else cifar10_label2name,
                     num_steps_per_epoch=len(train_queue))
 
   if config.count_params:

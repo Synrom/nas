@@ -17,7 +17,7 @@ import os
 import random
 from torch.utils.hooks import RemovableHandle
 
-from dataset.cifar import cifar_label2name
+from dataset.cifar import cifar10_label2name
 from utils import clone_optimizer, clone_model
 from models.darts.model_search import Network as DartsSearchNetwork
 from models.darts.model import NetworkCIFAR as DartsEvalNetwork
@@ -55,7 +55,7 @@ class Monitor:
       logdir: str = "log",
       runid: str = "train",
       loglevel: int = logging.DEBUG,
-      label2name: dict[int, str] = cifar_label2name,
+      label2name: dict[int, str] = cifar10_label2name,
       primitives: list[str] = PRIMITIVES,
       debug: bool = True,
       architect: Architect | None = None,
@@ -81,6 +81,7 @@ class Monitor:
     self.stage = stage
     self.logger = logger
     self.label2name = label2name
+    self.num_labels = len(self.label2name.keys())
     self.primitives = primitives
     self.logger.info(f" --- Starting new run {runid} --- ")
     self.training_loss = Live("Training Loss", self.path,
@@ -113,7 +114,7 @@ class Monitor:
                                Line(title="Validation topk accuracy", ylabel="Loss", grid=True))
     self.valid_err_rate = Live(
         "Validation Error Rate", self.path,
-        Line(ylabel="CIFAR-10 Test Error (%)",
+        Line(ylabel=f"CIFAR-{self.num_labels} Test Error (%)",
              xlabel="Training Epoch",
              title="Validation Error Rate",
              grid=True))
@@ -290,7 +291,7 @@ class Monitor:
 
   def first_batch(self, imgs: torch.Tensor, X: torch.Tensor, Y: torch.Tensor, loss: float):
     """ Visualize input to the model. """
-    self.logger.info(f"First loss is {loss:.2f} (should be around {-np.log(1/10):.2f})")
+    self.logger.info(f"First loss is {loss:.2f} (should be around {-np.log(1/self.num_labels):.2f})")
     num_samples = imgs.shape[0]
     imgs = imgs.permute(0, 2, 3, 1)
     data = X.detach().cpu().numpy()
@@ -355,12 +356,18 @@ class Monitor:
     self.test_batch_vis.next_row(f"Stage {self.stage} Epoch {self.epoch}")
     for col in range(cols):
       label = self.label2name[target[col].item()]
+      if len(labels) > 10:
+        topk = np.argsort(probs[col])[-10:]
+        labels = [labels[i] for i in topk]
+        data = np.array([probs[col][i] for i in topk])
+      else:
+        data = probs[col]
       plot = Bar(labels=labels,
                  ylim=(0, 1),
                  xticks=list(range(len(labels))),
                  rotation=45,
                  highlight_label=label)
-      self.test_batch_vis.add_entry(plot.plot(probs[col])[0], title)
+      self.test_batch_vis.add_entry(plot.plot(data)[0], title)
     self.logger.debug(f"Append predictions of test batch: {title}")
 
   def add_validation_loss(self, loss: float, acc: float, topk_acc: float):
@@ -561,7 +568,7 @@ class Monitor:
                      unrolled=config.unrolled)
       optimizer.zero_grad()
       logits = model(input_train)
-      assert logits.shape == torch.Size([config.batch_size, 10])
+      assert logits.shape == torch.Size([config.batch_size, self.num_labels])
       loss = criterion(logits, target_train)
       loss.backward()
       nn.utils.clip_grad_norm_(model.parameters(), config.grad_clip)

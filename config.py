@@ -94,6 +94,7 @@ class EvalConfig:
   dropout: float = 0.5
   time_hours: int = 24
   gelu: bool = False
+  cifar100: bool = False
 
 
 def add_neglatible_bool_to_parser(parser: argparse.ArgumentParser, cmd: str, name: str):

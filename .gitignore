@@ -12,3 +12,4 @@ logs/
 *.pkl
 test.py
 test/
+wandb/
