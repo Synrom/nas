@@ -278,21 +278,21 @@ class Network(nn.Module):
                     gelu=self._gelu)
     model.to(self.device)
 
-    offset = 0
-    for i in range(2, self._steps + 2):
-      for j in range(i):
-        for alpha_idx in range(stage.operations):
-          old_alpha_idx_normal = switch_idx_to_alpha_idx(
-              self._switch_normal[i][j], alpha_idx_to_switch_idx(switch_normal[i][j], alpha_idx))
-          model.alphas_normal[offset,
-                              alpha_idx].data.copy_(self.alphas_normal[offset,
-                                                                       old_alpha_idx_normal].data)
-          old_alpha_idx_reduce = switch_idx_to_alpha_idx(
-              self._switch_reduce[i][j], alpha_idx_to_switch_idx(switch_reduce[i][j], alpha_idx))
-          model.alphas_reduce[offset,
-                              alpha_idx].data.copy_(self.alphas_reduce[offset,
-                                                                       old_alpha_idx_reduce].data)
-        offset += 1
+    #offset = 0
+    #for i in range(2, self._steps + 2):
+    #  for j in range(i):
+    #    for alpha_idx in range(stage.operations):
+    #      old_alpha_idx_normal = switch_idx_to_alpha_idx(
+    #          self._switch_normal[i][j], alpha_idx_to_switch_idx(switch_normal[i][j], alpha_idx))
+    #      model.alphas_normal[offset,
+    #                          alpha_idx].data.copy_(self.alphas_normal[offset,
+    #                                                                   old_alpha_idx_normal].data)
+    #      old_alpha_idx_reduce = switch_idx_to_alpha_idx(
+    #          self._switch_reduce[i][j], alpha_idx_to_switch_idx(switch_reduce[i][j], alpha_idx))
+    #      model.alphas_reduce[offset,
+    #                          alpha_idx].data.copy_(self.alphas_reduce[offset,
+    #                                                                   old_alpha_idx_reduce].data)
+    #    offset += 1
     return model
 
   def arch_parameters(self) -> list[Variable]:
@@ -382,12 +382,12 @@ class Network(nn.Module):
       for j in range(i):
         _, topk_idxs = normal_weights[idx].abs().topk(num_ops)
         for alpha_idx in topk_idxs:
-          switch_idx = alpha_idx_to_switch_idx(self._switch_normal[i][j], alpha_idx)
+          switch_idx = alpha_idx_to_switch_idx(self._switch_normal[i][j], int(alpha_idx.item()))
           if drop_zeroes is False or PRIMITIVES[switch_idx] != "none":
             switch_normal[i][j][switch_idx] = True
           else:
             alpha_idx = normal_weights[idx].abs().topk(num_ops + 1)[1][-1]
-            switch_idx = alpha_idx_to_switch_idx(self._switch_normal[i][j], alpha_idx)
+            switch_idx = alpha_idx_to_switch_idx(self._switch_normal[i][j], int(alpha_idx.item()))
             switch_normal[i][j][switch_idx] = True
         idx += 1
     idx = 0
@@ -395,12 +395,12 @@ class Network(nn.Module):
       for j in range(i):
         _, topk_idxs = reduce_weights[idx].abs().topk(num_ops)
         for alpha_idx in topk_idxs:
-          switch_idx = alpha_idx_to_switch_idx(self._switch_reduce[i][j], alpha_idx)
+          switch_idx = alpha_idx_to_switch_idx(self._switch_reduce[i][j], int(alpha_idx.item()))
           if drop_zeroes is False or PRIMITIVES[switch_idx] != "none":
             switch_reduce[i][j][switch_idx] = True
           else:
             alpha_idx = reduce_weights[idx].abs().topk(num_ops + 1)[1][-1]
-            switch_idx = alpha_idx_to_switch_idx(self._switch_reduce[i][j], alpha_idx)
+            switch_idx = alpha_idx_to_switch_idx(self._switch_reduce[i][j], int(alpha_idx.item()))
             switch_reduce[i][j][switch_idx] = True
         idx += 1
 
