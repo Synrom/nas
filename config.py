@@ -95,6 +95,7 @@ class EvalConfig:
   time_hours: int = 24
   gelu: bool = False
   cifar100: bool = False
+  cut_aux_loss: int = 600
 
 
 def add_neglatible_bool_to_parser(parser: argparse.ArgumentParser, cmd: str, name: str):

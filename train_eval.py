@@ -40,6 +40,7 @@ def parse_args() -> EvalConfig:
   parser.add_argument('--genotype', type=str, help='Path to genotype')
   parser.add_argument('--grad_clip', type=float, default=5, help='gradient clipping')
   parser.add_argument("--data_num_workers", type=int, default=2, help="num workers of data loaders")
+  parser.add_argument("--cut_aux_loss", type=int, default=600, help="Cut aux loss after n epochs")
   parser.add_argument("--hours",
                       type=int,
                       default=24,
@@ -73,6 +74,8 @@ def train(train_queue: DataLoader, model: NetworkCIFAR, criterion: nn.Module,
   model.train()
   model.drop_path_prob = config.drop_path_prob * epoch / config.epochs
 
+  auxiliary_weight = config.auxiliary_weight if epoch < config.cut_aux_loss else 0.0
+
   for step, (imgs, input, target) in enumerate(train_queue):
     input, target = input.to(model.device), target.to(model.device)
 
@@ -81,7 +84,11 @@ def train(train_queue: DataLoader, model: NetworkCIFAR, criterion: nn.Module,
     raw_loss = criterion(logits, target)
     if config.auxiliary:
       loss_aux = criterion(logits_aux, target)
-      loss = config.auxiliary_weight * loss_aux + raw_loss
+      loss = auxiliary_weight * loss_aux + raw_loss
+      if step % config.vis_interval == 0:
+        monitor.add_aux_loss(raw_loss.item(), loss_aux.item())
+    else:
+      loss = raw_loss
     loss.backward()
     nn.utils.clip_grad_norm_(model.parameters(), config.grad_clip)
     optimizer.step()
@@ -104,7 +111,6 @@ def train(train_queue: DataLoader, model: NetworkCIFAR, criterion: nn.Module,
 
     if step % config.vis_interval == 0:
       monitor.logger.info(f"After {step} steps of {epoch} epoch: {loss.item()}")
-      monitor.add_aux_loss(raw_loss.item(), loss_aux.item())
 
     monitor.add_training_loss(loss.item())
 
