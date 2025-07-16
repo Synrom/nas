@@ -405,3 +405,38 @@ class Network(nn.Module):
         idx += 1
 
     return switch_normal, switch_reduce
+
+  def multiedge_genotype(self) -> Genotype:
+
+    def _parse(weights: ndarray, switch: Switch):
+      gene: list[tuple[str, int]] = []
+      n = 2
+      start = 0
+      for i in range(self._steps):  # go over all nodes
+        end = start + n
+
+        # weights of edged going into node i
+        W = weights[start:end].copy()  # shape (num_edges, num_operations)
+
+        operations = sorted([(i, j) for i in range(i + 2) for j in range(len(W[i]))],
+                            key=lambda idx: W[idx],
+                            reverse=True)[:2]
+
+        for edge, operation in operations:
+          activations: list[bool] = switch[i + 2][edge]
+          gene.append((PRIMITIVES[alpha_idx_to_switch_idx(activations, operation)], edge))
+
+        start = end
+        n += 1
+      return gene
+
+    gene_normal = _parse(self.normal_weights().data.cpu().numpy(), self._switch_normal)
+    gene_reduce = _parse(self.reduce_weights().data.cpu().numpy(), self._switch_reduce)
+
+    # result of node are the concats of the last k-nodes where k=self._multiplier
+    concat = list(range(2 + self._steps - self._multiplier, self._steps + 2))
+
+    return Genotype(normal=gene_normal,
+                    normal_concat=concat,
+                    reduce=gene_reduce,
+                    reduce_concat=concat)
