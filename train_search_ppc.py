@@ -422,8 +422,8 @@ if __name__ == '__main__':
       monitor.end_epoch(model, architect, visualize)
 
       # save genotype
-      if epoch == config.epochs - 1:
-        genotype_path = monitor.path / f"{config.runid}_genotype.json"
+      if epoch == stage.epochs + 10 - 1:
+        genotype_path = monitor.path / f"genotype_{stage_idx}_{epoch}.json"
         save_genotype(genotype_path, model.genotype())
         monitor.logger.info(f"Saved resulting genotype to {genotype_path.as_posix()}.")
 

@@ -195,6 +195,8 @@ if __name__ == "__main__":
                            num_workers=config.data_num_workers)
 
   genotype = load_genotype(Path(config.genotype))
+  print("Genotype:")
+  print(genotype)
 
   if config.past_train is not None:
     with open(config.past_train) as fstream:
@@ -265,7 +267,7 @@ if __name__ == "__main__":
 
     stop = False
     current_time = time.time()
-    if current_time - start_time >= config.time_hours * 60 * 60:
+    if current_time - start_time >= config.time_hours * 60 * 60 * 3 / 4 and config.time_hours < 5: 
       monitor.logger.info(f"Restart after {config.time_hours} hours")
       stop = True
 

@@ -344,7 +344,6 @@ class Monitor:
     self.logger.info(f"Loss on test batch is {loss.item():.2f}")
     probs = F.softmax(out, dim=1).cpu().detach().numpy()
 
-    labels = list(self.label2name.values())
     cols = imgs.shape[0]
     if self.epoch == 0 and self.stage == 0:
       imgs = imgs.permute(0, 2, 3, 1)
@@ -355,6 +354,7 @@ class Monitor:
 
     self.test_batch_vis.next_row(f"Stage {self.stage} Epoch {self.epoch}")
     for col in range(cols):
+      labels = list(self.label2name.values())
       label = self.label2name[target[col].item()]
       if len(labels) > 10:
         topk = np.argsort(probs[col])[-10:]
