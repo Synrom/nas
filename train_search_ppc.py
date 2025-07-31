@@ -4,6 +4,7 @@ import torch
 import torch.nn.functional as F
 import argparse
 import time
+import random
 import numpy as np
 from torchvision import transforms
 from torch.utils.data import DataLoader
@@ -27,7 +28,7 @@ from models.darts.genotypes import save_genotype, PRIMITIVES
 
 def parse_args() -> PPCSearchConfig:
   parser = argparse.ArgumentParser("cifar")
-  parser.add_argument("--batch_size", type=int, default=64, help="batch size")
+  parser.add_argument("--batch_size", type=int, default=128, help="batch size")
   parser.add_argument("--learning_rate", type=float, default=0.025, help="init learning rate")
   parser.add_argument("--learning_rate_min", type=float, default=0.001, help="min learning rate")
   parser.add_argument("--momentum", type=float, default=0.9, help="momentum")
@@ -47,6 +48,11 @@ def parse_args() -> PPCSearchConfig:
   parser.add_argument("--train_portion", type=float, default=0.5, help="portion of training data")
   parser.add_argument("--data_num_workers", type=int, default=2, help="num workers of data loaders")
   parser.add_argument("--past_train", type=str, default=None, help="Optional path to previous train.")
+  parser.add_argument("--hours",
+                      type=int,
+                      default=1,
+                      help="Number of hours per job",
+                      dest="time_hours")
   parser.add_argument("--unrolled",
                       action="store_true",
                       default=False,
@@ -227,11 +233,10 @@ if __name__ == '__main__':
   torch.backends.cudnn.enabled = True
 
   # set random seed
-  #torch.manual_seed(config.seed)
-  #torch.cuda.manual_seed(config.seed)
-  #torch.cuda.manual_seed_all(config.seed)
-  #np.random.seed(config.seed)
-  #random.seed(config.seed)
+  torch.manual_seed(config.seed)
+  torch.cuda.manual_seed(config.seed)
+  np.random.seed(config.seed)
+  random.seed(config.seed)
 
   train_transform = transforms.Compose([
       transforms.RandomCrop(32, padding=4),
@@ -395,7 +400,7 @@ if __name__ == '__main__':
 
       current_time = time.time()
       stop = False
-      if current_time - start_time >= 60 * 45:  # stop after 45 mins
+      if current_time - start_time >= config.time_hours * 60 * 60 * 3 / 4 and config.time_hours < 5: 
         monitor.logger.info("Restart after half an hour")
         stop = True
 

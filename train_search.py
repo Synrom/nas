@@ -1,6 +1,7 @@
 import json
 import time
 import torch
+import os
 import torch.nn.functional as F
 import random
 import argparse
@@ -116,12 +117,23 @@ def validate_model(model: Network, criterion: nn.Module, monitor: Monitor, valid
   monitor.add_validation_loss(mean_loss, mean_acc, mean_topk_acc)
   return mean_loss, mean_acc, mean_topk_acc
 
+def save_alphas(alpha, path):
+  torch.save(alpha.cpu(), path)
 
 def train(model: Network, criterion: nn.Module, monitor: Monitor, architect: Architect, lr: float,
           epoch: int, optimizer: Optimizer):
   monitor.logger.info(f"Train {epoch} epoch")
   for idx, (imgs, input_train, target_train) in enumerate(train_queue):
     model.train()
+
+    if epoch == 0 and idx <= 20:
+      monitor.visualize_alphas(F.softmax(model.alphas_normal, dim=-1).detach().cpu().numpy(),
+                              F.softmax(model.alphas_reduce, dim=-1).detach().cpu().numpy(), model)
+
+    if epoch == 0 and idx <= 20:
+      save_alphas(model.alphas_normal, monitor.path / f'alphas_normal_{epoch}-{idx+1}.pt')
+      save_alphas(model.alphas_reduce, monitor.path / f'alphas_reduce_{epoch}-{idx+1}.pt')
+
 
     input_train, target_train = input_train.to(model.device), target_train.to(model.device)
 
@@ -195,11 +207,10 @@ if __name__ == '__main__':
   torch.backends.cudnn.enabled = True
 
   # set random seed
-  torch.manual_seed(config.seed)
-  torch.cuda.manual_seed(config.seed)
-  torch.cuda.manual_seed_all(config.seed)
-  np.random.seed(config.seed)
-  random.seed(config.seed)
+  #torch.manual_seed(config.seed)
+  #torch.cuda.manual_seed(config.seed)
+  #np.random.seed(config.seed)
+  #random.seed(config.seed)
 
   train_transform = transforms.Compose([
       transforms.RandomCrop(32, padding=4),
@@ -298,9 +309,14 @@ if __name__ == '__main__':
   for epoch in range(start_epoch, config.epochs):
     print(f"Epoch is {epoch}")
     lr = scheduler.get_lr()[0]
-
+    monitor.visualize_alphas(F.softmax(model.alphas_normal, dim=-1).detach().cpu().numpy(),
+                              F.softmax(model.alphas_reduce, dim=-1).detach().cpu().numpy(), model)
     # train single batch
     train(model, criterion, monitor, architect, lr, epoch, optimizer)
+
+    if epoch > 0:
+      save_alphas(model.alphas_normal, monitor.path / f'alphas_normal_{epoch}-{0}.pt')
+      save_alphas(model.alphas_reduce, monitor.path / f'alphas_reduce_{epoch}-{0}.pt')
 
     # visualize everything
     model.eval()

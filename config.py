@@ -146,3 +146,4 @@ class PPCSearchConfig:
   fair: bool = False
   aux_loss_weight: float = 10.0
   gelu: bool = False
+  time_hours: int = 24

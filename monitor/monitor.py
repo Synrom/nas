@@ -33,6 +33,7 @@ from models.ppc.model_search import SEBlock
 from dashboard.config import write_dashboard_config, DashboardConfig
 from models.ppc.op import PartialMixedOp
 from models.ppc.model_search import Cell as PpcCell
+from models.ppc.switch import init_switch
 
 SearchNetwork = DartsSearchNetwork | PPCSearchNetwork
 EvalNetwork = DartsEvalNetwork
@@ -399,12 +400,12 @@ class Monitor:
     self.logger.info("Visualize alphas ...")
     normal_plot = VisAlpha(steps=model._steps,
                            primitives=self.primitives,
-                           switch=model._switch_normal,
+                           switch=model._switch_normal if isinstance(model, PPCSearchNetwork) else init_switch(model._steps, len(PRIMITIVES), True),
                            verbose=False,
                            short_primitives=SHORT_PRIMITIVES)
     reduce_plot = VisAlpha(steps=model._steps,
                            primitives=self.primitives,
-                           switch=model._switch_reduce,
+                           switch=model._switch_reduce if isinstance(model, PPCSearchNetwork) else init_switch(model._steps, len(PRIMITIVES), True),
                            verbose=False,
                            short_primitives=SHORT_PRIMITIVES)
     offset = 0
