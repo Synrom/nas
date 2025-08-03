@@ -24,6 +24,7 @@ def parse_args() -> EvalConfig:
   parser = argparse.ArgumentParser("cifar")
   parser.add_argument('--batch_size', type=int, default=96, help='batch size')  # 128 for PPC
   parser.add_argument('--learning_rate', type=float, default=0.025, help='init learning rate')
+  parser.add_argument("--learning_rate_min", type=float, default=0.000, help="min learning rate")
   parser.add_argument('--momentum', type=float, default=0.9, help='momentum')
   parser.add_argument('--weight_decay', type=float, default=3e-4, help='weight decay')
   parser.add_argument('--epochs', type=int, default=600, help='num of training epochs')
@@ -209,7 +210,7 @@ if __name__ == "__main__":
                                   config.learning_rate,
                                   momentum=config.momentum,
                                   weight_decay=config.weight_decay)
-      scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, config.epochs)
+      scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, config.epochs, eta_min=config.learning_rate_min)
       scheduler_states = torch.load(past.scheduler_checkpoint, weights_only=True)
       optimizer.load_state_dict(scheduler_states["optimizer_state"])
       scheduler.load_state_dict(scheduler_states["scheduler_state"])
@@ -221,7 +222,7 @@ if __name__ == "__main__":
                                 config.learning_rate,
                                 momentum=config.momentum,
                                 weight_decay=config.weight_decay)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, config.epochs)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, config.epochs, eta_min=config.learning_rate_min)
 
   model.to(device)
 
