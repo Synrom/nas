@@ -400,7 +400,7 @@ if __name__ == '__main__':
 
       current_time = time.time()
       stop = False
-      if current_time - start_time >= config.time_hours * 60 * 60 * 3 / 4 and config.time_hours < 5: 
+      if current_time - start_time >= config.time_hours * 60 * 60 * 3 / 4 and config.time_hours < 5:
         monitor.logger.info("Restart after half an hour")
         stop = True
 
