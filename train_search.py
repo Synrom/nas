@@ -117,8 +117,10 @@ def validate_model(model: Network, criterion: nn.Module, monitor: Monitor, valid
   monitor.add_validation_loss(mean_loss, mean_acc, mean_topk_acc)
   return mean_loss, mean_acc, mean_topk_acc
 
+
 def save_alphas(alpha, path):
   torch.save(alpha.cpu(), path)
+
 
 def train(model: Network, criterion: nn.Module, monitor: Monitor, architect: Architect, lr: float,
           epoch: int, optimizer: Optimizer):
@@ -127,13 +129,13 @@ def train(model: Network, criterion: nn.Module, monitor: Monitor, architect: Arc
     model.train()
 
     if epoch == 0 and idx <= 20:
-      monitor.visualize_alphas(F.softmax(model.alphas_normal, dim=-1).detach().cpu().numpy(),
-                              F.softmax(model.alphas_reduce, dim=-1).detach().cpu().numpy(), model)
+      monitor.visualize_alphas(
+          F.softmax(model.alphas_normal, dim=-1).detach().cpu().numpy(),
+          F.softmax(model.alphas_reduce, dim=-1).detach().cpu().numpy(), model)
 
     if epoch == 0 and idx <= 20:
       save_alphas(model.alphas_normal, monitor.path / f'alphas_normal_{epoch}-{idx+1}.pt')
       save_alphas(model.alphas_reduce, monitor.path / f'alphas_reduce_{epoch}-{idx+1}.pt')
-
 
     input_train, target_train = input_train.to(model.device), target_train.to(model.device)
 
@@ -309,8 +311,9 @@ if __name__ == '__main__':
   for epoch in range(start_epoch, config.epochs):
     print(f"Epoch is {epoch}")
     lr = scheduler.get_lr()[0]
-    monitor.visualize_alphas(F.softmax(model.alphas_normal, dim=-1).detach().cpu().numpy(),
-                              F.softmax(model.alphas_reduce, dim=-1).detach().cpu().numpy(), model)
+    monitor.visualize_alphas(
+        F.softmax(model.alphas_normal, dim=-1).detach().cpu().numpy(),
+        F.softmax(model.alphas_reduce, dim=-1).detach().cpu().numpy(), model)
     # train single batch
     train(model, criterion, monitor, architect, lr, epoch, optimizer)
 

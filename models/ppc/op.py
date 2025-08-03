@@ -5,14 +5,14 @@ import numpy as np
 from models.darts.genotypes import PRIMITIVES
 from models.darts.operations import OPS, ReLUConvBN, activatition
 
+
 def channel_shuffle(x, groups):
   batchsize, num_channels, height, width = x.data.size()
 
   channels_per_group = num_channels // groups
-  
+
   # reshape
-  x = x.view(batchsize, groups, 
-      channels_per_group, height, width)
+  x = x.view(batchsize, groups, channels_per_group, height, width)
 
   x = torch.transpose(x, 1, 2).contiguous()
 
@@ -21,11 +21,13 @@ def channel_shuffle(x, groups):
 
   return x
 
+
 def random_shuffle(x):
   batchsize, num_channels, height, width = x.data.size()
   indices = torch.randperm(num_channels)
-  x = x[:,indices]
+  x = x[:, indices]
   return x
+
 
 class PartialMixedOp(nn.Module):
 
@@ -33,8 +35,8 @@ class PartialMixedOp(nn.Module):
     super(PartialMixedOp, self).__init__()
     self._ops = nn.ModuleList()
     self.C_sampled = int(prob * C)
-    self.k = int(1/prob)
-    self.mp = nn.MaxPool2d(2,2)
+    self.k = int(1 / prob)
+    self.mp = nn.MaxPool2d(2, 2)
     for primitive, activated in zip(PRIMITIVES, edge_switch):
       if activated is False:
         continue
@@ -43,22 +45,22 @@ class PartialMixedOp(nn.Module):
         op = nn.Sequential(op, nn.BatchNorm2d(self.C_sampled, affine=False))
       self._ops.append(op)
 
-
   def forward(self, x, weights):
-    #channel proportion k=4  
+    #channel proportion k=4
     x = random_shuffle(x)
-    xtemp = x[ : , :  self.C_sampled, :, :]
-    xtemp2 = x[ : ,  self.C_sampled:, :, :]
+    xtemp = x[:, :self.C_sampled, :, :]
+    xtemp2 = x[:, self.C_sampled:, :, :]
     temp1 = sum(w * op(xtemp) for w, op in zip(weights, self._ops))
     #reduction cell needs pooling before concat
     if temp1.shape[2] == x.shape[2]:
-      ans = torch.cat([temp1,xtemp2],dim=1)
+      ans = torch.cat([temp1, xtemp2], dim=1)
     else:
-      ans = torch.cat([temp1,self.mp(xtemp2)], dim=1)
+      ans = torch.cat([temp1, self.mp(xtemp2)], dim=1)
     #ans = channel_shuffle(ans,self.k)
     #ans = torch.cat([ans[ : ,  dim_2//4:, :, :],ans[ : , :  dim_2//4, :, :]],dim=1)
     #except channe shuffle, channel shift also works
     return ans
+
 
 #class PartialMixedOp(nn.Module):
 #  """
