@@ -3,6 +3,7 @@ import torch.nn.functional as F
 
 from models.ppc.model_search import Network
 from config import PPCSearchConfig
+from torch.utils.data import DataLoader
 
 class Batch:
   def __init__(self, input_train: torch.Tensor, target_train: torch.Tensor, input_search: torch.Tensor, target_search: torch.Tensor):
@@ -22,7 +23,7 @@ class FuncBo(object):
     This class handles the training of the network during search stage.
     """
 
-  def __init__(self, model: Network, args: PPCSearchConfig):
+  def __init__(self, model: Network, args: PPCSearchConfig, train: DataLoader, search: DataLoader, N: int, M: int, K: int):
     self.model = model
     self.dual_model = self.model.new()
     self.dual_model.alphas_normal = self.model.alphas_normal
@@ -37,40 +38,48 @@ class FuncBo(object):
     self.dual_optimizater = torch.optim.Adam(self.dual_model.parameters(),
                                 args.learning_rate,
                                 weight_decay=args.weight_decay)
+    self.train = train
+    self.search = search
+    self.M, self.N, self.K = M, N, K
+  
+  def sample_batch(self) -> Batch:
+    _, input_search, target_search = next(iter(self.search))
+    _, input_train, target_train = next(iter(self.train))
+    return Batch(input_train, target_train, input_search, target_search)
 
-
-  def step(
-      self,
-      input_train: torch.Tensor,
-      target_train: torch.Tensor,
-      input_search: torch.Tensor,
-      target_search: torch.Tensor,
-  ):
+  def loop(self):
     """
         If unrolled, make gradient step on alpha.
         Otherwise, make gradient step on ws.
         """
-    batch = Batch(input_train, target_train, input_search, target_search)
-    self.dual_model.train()
-    self.inner_optimization(batch)
-    self.dual_optimization(batch)
-    self.total_optimization(batch)
+    for step in range(self.N):
+      self.inner_loop()
+      self.dual_loop()
+      self.total_optimization(self.sample_batch())
+      print(f"After {step+1} steps, genotype is:")
+      print(self.model.genotype())
   
-  def inner_optimization(self, batch: Batch):
+  def inner_loop(self):
     """ Update model parameters based on input_train"""
-    input, target  = batch.train()
-    self.inner_optimizater.zero_grad()
-    logits = self.model(input)
-    loss = F.cross_entropy(logits, target)
-    loss.backward()
-    self.inner_optimizater.step()
+    for _ in range(self.M):
+      batch = self.sample_batch()
+      input, target  = batch.train()
+      self.inner_optimizater.zero_grad()
+      logits = self.model(input)
+      loss = F.cross_entropy(logits, target)
+      loss.backward()
+      print(f"Inner loss: {loss.item():.3f}")
+      self.inner_optimizater.step()
   
-  def dual_optimization(self, batch: Batch):
+  def dual_loop(self):
     """ Compute dual loss based on input_train, input_search and self.model"""
-    self.dual_optimizater.zero_grad()  
-    loss = self.dual_loss(batch)
-    loss.backward()
-    self.dual_optimizater.step()
+    for _ in range(self.K):
+      batch = self.sample_batch()
+      self.dual_optimizater.zero_grad()  
+      loss = self.dual_loss(batch)
+      loss.backward()
+      print(f"Dual loss: {loss.item():.3f}")
+      self.dual_optimizater.step()
 
   def dual_loss(self, batch: Batch):
     x_in, y_in = batch.train()
