@@ -66,6 +66,7 @@ class EvalConfig:
   weight_decay: float = 3e-4
   batch_size: int = 64
   learning_rate: float = 0.025
+  learning_rate_min: float = 0.0
   epochs: int = 50
   init_channels: int = 16
   layers: int = 8

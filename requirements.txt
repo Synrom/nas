@@ -1,1 +1,6 @@
 graphviz
+torch
+numpy
+torchvision
+matplotlib
+dacite

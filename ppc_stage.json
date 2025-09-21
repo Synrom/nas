@@ -1,0 +1,26 @@
+[
+  {
+    "cells": 5,
+    "channels": 8,
+    "epochs": 20,
+    "operations": 8,
+    "channel_sampling_prob": 0.25,
+    "dropout": 0.0
+  },
+  {
+    "cells": 11,
+    "channels": 16,
+    "epochs": 25,
+    "operations": 5,
+    "channel_sampling_prob": 0.5,
+    "dropout": 0.4
+  },
+  {
+    "cells": 17,
+    "channels": 24,
+    "epochs": 30,
+    "operations": 3,
+    "channel_sampling_prob": 0.75,
+    "dropout": 0.7
+  }
+]
